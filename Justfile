@@ -107,7 +107,11 @@ clean:
 
 vm *ARGS:
     #!/usr/bin/env bash
-    flatpak run "--command=qemu-system-$(arch)" org.virt_manager.virt-manager \
+    qemu="qemu-system-$(arch)"
+    if [[ ! $(type -P "$qemu") ]]; then
+      qemu="flatpak run --command=$qemu org.virt_manager.virt-manager"
+    fi
+    $qemu \
         -enable-kvm \
         -M q35 \
         -cpu host \

@@ -9,8 +9,8 @@ if ! id "$USERNAME" >/dev/null 2>&1; then
   # Create the user with home directory
   useradd -m -G wheel -s /bin/bash "$USERNAME"
 
-  # Set no password (auto-login possible)
-  passwd -d "$USERNAME"
+  # Set password to username
+  echo "$USERNAME" | passwd "$USERNAME" --stdin
 
   # Allow passwordless sudo
   echo "$USERNAME ALL=(ALL) NOPASSWD: ALL" >/etc/sudoers.d/90-$USERNAME

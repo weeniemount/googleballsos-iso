@@ -56,11 +56,10 @@ iso-organize: init-work
     sudo cp {{ workdir }}/initramfs.img {{ isoroot }}/boot
     sudo mv {{ workdir }}/squashfs.img {{ isoroot }}/LiveOS/squashfs.img
 
-iso $IMAGE:
+iso:
     #!/usr/bin/env bash
-    # grub2 grub2-tools-extra xorriso
     set -xeuo pipefail
-    sudo podman run --privileged --rm -it -v .:/tmp/test:Z registry.fedoraproject.org/fedora:41 \
+    sudo podman run --privileged --rm -it -v ".:/tmp/test:Z" registry.fedoraproject.org/fedora:41 \
         sh -c "
     set -xeuo pipefail
     sudo dnf install -y grub2 grub2-tools-extra xorriso
@@ -74,7 +73,7 @@ build $IMAGE:
     just rootfs "${IMAGE}"
     just squash "${IMAGE}"
     just iso-organize
-    just iso "${IMAGE}"
+    just iso
 
 clean:
     rm -rf {{ workdir }}

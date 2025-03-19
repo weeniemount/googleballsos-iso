@@ -9,6 +9,7 @@ This is an experiment to see how far we can get building our own ISOs. The objec
 
 - Generate a LiveCD so users can try out an image before committing
 - Install the image and flatpaks to a selected disk with minimal user-input
+- Basically be an MVP for `bootc install` 
 
 ## Why?
 

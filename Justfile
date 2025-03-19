@@ -9,8 +9,8 @@ initramfs $IMAGE: init-work
     #!/usr/bin/env bash
     # THIS NEEDS dracut-live
     set -xeuo pipefail
-    sudo podman run --privileged --rm -it -v .:/tmp/test:Z $IMAGE \
-        sh -c '
+    sudo podman run --privileged --rm -i -v .:/tmp/test:Z $IMAGE \
+        sh <<'INITRAMFSEOF'
     set -xeuo pipefail
     sudo dnf install -y dracut dracut-live kernel
     INSTALLED_KERNEL=$(rpm -q kernel-core --queryformat "%{evr}.%{arch}" | tail -n 1)
@@ -25,7 +25,8 @@ initramfs $IMAGE: init-work
     exec /usr/bin/uname \$@
     EOF
     install -Dm0755 /tmp/fake-uname /tmp/bin/uname
-    PATH=/tmp/bin:$PATH dracut --zstd --reproducible --no-hostonly --add dmsquash-live --add dmsquash-live-autooverlay --force /tmp/test/{{ workdir }}/initramfs.img'
+    PATH=/tmp/bin:$PATH dracut --zstd --reproducible --no-hostonly --add dmsquash-live --add dmsquash-live-autooverlay --force /tmp/test/{{ workdir }}/initramfs.img
+    INITRAMFSEOF
 
 rootfs $IMAGE: init-work
     #!/usr/bin/env bash

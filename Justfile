@@ -34,7 +34,7 @@ rootfs $IMAGE: init-work
     ROOTFS="{{ workdir }}/rootfs"
     mkdir -p $ROOTFS
     sudo podman create --rm --cidfile .ctr.lock "${IMAGE}"
-    trap 'podman rm "$(<.ctr.lock)"' EXIT
+    trap 'sudo podman rm "$(<.ctr.lock)"' EXIT
     sudo podman export "$(<.ctr.lock)" | tar -xf - -C "${ROOTFS}"
 
 squash $IMAGE: init-work

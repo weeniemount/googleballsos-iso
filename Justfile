@@ -1,5 +1,5 @@
-workdir := env("TITANOBOA_WORKDIR", "work")
-isoroot := env("TITANOBOA_ISO_ROOT", "work/iso-root")
+workdir := env("TITANOBOA_WORKDIR", justfile_dir() / "work")
+isoroot := env("TITANOBOA_ISO_ROOT", justfile_dir() / "work/iso-root")
 
 init-work:
     mkdir -p {{ workdir }}

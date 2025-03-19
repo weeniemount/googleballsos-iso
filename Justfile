@@ -33,9 +33,8 @@ rootfs $IMAGE: init-work
     set -xeuo pipefail
     ROOTFS="{{ workdir }}/rootfs"
     mkdir -p $ROOTFS
-    sudo podman create --rm --cidfile .ctr.lock "${IMAGE}"
-    trap 'sudo podman rm "$(<.ctr.lock)"' EXIT
-    sudo podman export "$(<.ctr.lock)" | tar -xf - -C "${ROOTFS}"
+    ctr="$(sudo podman create --rm "${IMAGE}")" && trap "sudo podman rm $ctr" EXIT
+    sudo podman export $ctr | tar -xf - -C "${ROOTFS}"
 
 rootfs-setuid:
     #!/usr/bin/env bash

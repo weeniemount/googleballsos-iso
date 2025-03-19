@@ -3,4 +3,3 @@ rootfs
 *.raw
 *.iso
 work
-*.lock

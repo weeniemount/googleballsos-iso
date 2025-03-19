@@ -82,7 +82,7 @@ clean:
     rm -rf {{ workdir }}
     rm -rf output.iso
 
-vm *ARGS:
+vm ISO_FILE *ARGS:
     #!/usr/bin/env bash
     flatpak run "--command=qemu-system-$(arch)" org.virt_manager.virt-manager \
         -enable-kvm \
@@ -94,4 +94,4 @@ vm *ARGS:
         -net user,hostfwd=tcp::2222-:22 \
         -display gtk \
         -boot d \
-        -cdrom {{ ARGS }}
+        -cdrom {{ ISO_FILE }} {{ ARGS }}

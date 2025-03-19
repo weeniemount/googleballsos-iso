@@ -93,20 +93,20 @@ iso:
     sudo dnf install -y grub2 grub2-efi grub2-tools-extra xorriso
     grub2-mkrescue --xorriso=/app/src/xorriso_wrapper.sh -o /app/output.iso /app/{{ isoroot }}"
 
-build image livecd_user=0:
+build image livecd_user="0":
     #!/usr/bin/env bash
     set -xeuo pipefail
     just clean
-    just initramfs "${IMAGE}"
-    just rootfs "${IMAGE}"
+    just initramfs "{{ image }}"
+    just rootfs "{{ image }}"
     just rootfs-setuid
-    just rootfs-include-container "${IMAGE}"
+    just rootfs-include-container "{{ image }}"
 
     if [[ {{ livecd_user }} == 1 ]]; then
       just copy-into-rootfs
     fi
 
-    just squash "${IMAGE}"
+    just squash "{{ image }}"
     just iso-organize
     just iso
 

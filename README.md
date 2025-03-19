@@ -22,3 +22,7 @@ just vm ./output.iso
 - [ ] UEFI support
 - [ ] Have an installer for the Live ISO
 - [ ] Different names for each image
+
+## Contributor Metrics
+
+![Alt](https://repobeats.axiom.co/api/embed/ab79f8a8b6ba6111cc7123cbbb8762864c76699f.svg "Repobeats analytics image")

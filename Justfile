@@ -55,6 +55,13 @@ rootfs-include-container $IMAGE:
     sudo curl -fSsLo "${ROOTFS}/usr/bin/fuse-overlayfs" "https://github.com/containers/fuse-overlayfs/releases/download/v1.14/fuse-overlayfs-$(arch)"
     sudo chmod +x "${ROOTFS}/usr/bin/fuse-overlayfs"
 
+copy-into-rootfs: init-work
+    #!/usr/bin/env bash
+    set -xeuo pipefail
+    ROOTFS="{{ workdir }}/rootfs"
+    rsync -aP src/system/ $ROOTFS
+    mkdir -p $ROOTFS
+
 squash $IMAGE: init-work
     #!/usr/bin/env bash
     set -xeuo pipefail
@@ -86,7 +93,7 @@ iso:
     sudo dnf install -y grub2 grub2-efi grub2-tools-extra xorriso
     grub2-mkrescue --xorriso=/app/src/xorriso_wrapper.sh -o /app/output.iso /app/{{ isoroot }}"
 
-build $IMAGE:
+build image livecd_user=0:
     #!/usr/bin/env bash
     set -xeuo pipefail
     just clean
@@ -94,6 +101,11 @@ build $IMAGE:
     just rootfs "${IMAGE}"
     just rootfs-setuid
     just rootfs-include-container "${IMAGE}"
+
+    if [[ {{ livecd_user }} == 1 ]]; then
+      just copy-into-rootfs
+    fi
+
     just squash "${IMAGE}"
     just iso-organize
     just iso

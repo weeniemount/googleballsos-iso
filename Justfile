@@ -83,11 +83,12 @@ iso-organize: init-work
 iso:
     #!/usr/bin/env bash
     set -xeuo pipefail
-    sudo podman run --privileged --rm -it -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
-        sh -c "
+    sudo podman run --privileged --rm -i -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
+        sh <<"ISOEOF"
     set -xeuo pipefail
     sudo dnf install -y grub2 grub2-efi grub2-tools-extra xorriso
-    grub2-mkrescue --xorriso=/app/src/xorriso_wrapper.sh -o /app/output.iso /app/{{ isoroot }}"
+    grub2-mkrescue --xorriso=/app/src/xorriso_wrapper.sh -o /app/output.iso /app/{{ isoroot }}
+    ISOEOF
 
 build $IMAGE:
     #!/usr/bin/env bash

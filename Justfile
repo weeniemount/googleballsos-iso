@@ -64,6 +64,18 @@ copy-into-rootfs: init-work
     rsync -aP src/system/ $ROOTFS
     mkdir -p $ROOTFS
 
+install-livesys-scripts: init-work
+    #!/usr/bin/env bash
+    set -xeuo pipefail
+    ROOTFS="{{ workdir }}/rootfs"
+    sudo podman run --security-opt label=type:unconfined_t -i --rootfs "$(realpath ${ROOTFS})" /usr/bin/bash \
+    <<"LIVESYSEOF"
+    set -xeuo pipefail
+    dnf="$({{tmpl_search_for_dnf}})"
+    $dnf install -y livesys-scripts
+    systemctl enable livesys.service livesys-late.service
+    LIVESYSEOF
+
 squash $IMAGE: init-work
     #!/usr/bin/env bash
     set -xeuo pipefail

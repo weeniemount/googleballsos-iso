@@ -82,6 +82,27 @@ rootfs-install-livesys-scripts: init-work
     set -xeuo pipefail
     dnf="$({{tmpl_search_for_dnf}})"
     $dnf install -y livesys-scripts
+
+    # Determine desktop environment. Must match one of /usr/libexec/livesys/sessions.d/livesys-{desktop_env}
+    desktop_env=""
+    # We can tell what desktop environment we are targeting by looking at
+    # the session files. Lets decide by the first file found.
+    _session_file="$(find /usr/share/wayland-sessions/ /usr/share/xsessions \
+        -maxdepth 1 -type f -name '*.desktop' -printf '%P' -quit)"
+    case $_session_file in
+    # TODO: add more sessions.
+    plasma.desktop) desktop_env=kde   ;;
+    gnome*)         desktop_env=gnome ;;
+    xfce.desktop)   desktop_env=xfce  ;;
+    *)
+        echo "ERROR[rootfs-install-livesys-scripts]: no matching desktop enviroment found"\
+            " at /usr/share/wayland-sessions/ /usr/share/xsessions";
+        exit 1
+    ;;
+    esac && unset -v _session_file
+    sed -i "s/^livesys_session=.*/livesys_session=${desktop_env}/" /etc/sysconfig/livesys
+
+    # Enable services
     systemctl enable livesys.service livesys-late.service
     LIVESYSEOF
 

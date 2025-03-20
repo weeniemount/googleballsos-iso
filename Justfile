@@ -35,6 +35,7 @@ initramfs $IMAGE: init-work
     exec /usr/bin/uname \$@
     EOF
     install -Dm0755 /app/work/fake-uname /var/tmp/bin/uname
+    mkdir -p $(realpath /root)
     PATH=/var/tmp/bin:$PATH dracut --zstd --reproducible --no-hostonly --add "dmsquash-live dmsquash-live-autooverlay" --force /app/{{ workdir }}/initramfs.img
     INITRAMFSEOF
 

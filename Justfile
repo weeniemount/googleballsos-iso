@@ -9,8 +9,8 @@ initramfs $IMAGE: init-work
     #!/usr/bin/env bash
     # THIS NEEDS dracut-live
     set -xeuo pipefail
-    sudo podman run --privileged --rm -it -v .:/app:Z $IMAGE \
-        sh -c '
+    sudo podman run --privileged --rm -i -v .:/app:Z $IMAGE \
+        sh <<'INITRAMFSEOF'
     set -xeuo pipefail
     sudo dnf install -y dracut dracut-live kernel
     INSTALLED_KERNEL=$(rpm -q kernel-core --queryformat "%{evr}.%{arch}" | tail -n 1)
@@ -25,14 +25,16 @@ initramfs $IMAGE: init-work
     exec /usr/bin/uname \$@
     EOF
     install -Dm0755 /app/work/fake-uname /var/tmp/bin/uname
-    PATH=/var/tmp/bin:$PATH dracut --zstd --reproducible --no-hostonly --add "dmsquash-live dmsquash-live-autooverlay" --force /app/{{ workdir }}/initramfs.img'
+    PATH=/var/tmp/bin:$PATH dracut --zstd --reproducible --no-hostonly --add "dmsquash-live dmsquash-live-autooverlay" --force /app/{{ workdir }}/initramfs.img
+    INITRAMFSEOF
 
 rootfs $IMAGE: init-work
     #!/usr/bin/env bash
     set -xeuo pipefail
     ROOTFS="{{ workdir }}/rootfs"
     mkdir -p $ROOTFS
-    sudo podman export "$(sudo podman create "${IMAGE}")" | tar -xf - -C "${ROOTFS}"
+    ctr="$(sudo podman create --rm "${IMAGE}")" && trap "sudo podman rm $ctr" EXIT
+    sudo podman export $ctr | tar -xf - -C "${ROOTFS}"
 
 rootfs-setuid:
     #!/usr/bin/env bash
@@ -87,11 +89,12 @@ iso-organize: init-work
 iso:
     #!/usr/bin/env bash
     set -xeuo pipefail
-    sudo podman run --privileged --rm -it -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
-        sh -c "
+    sudo podman run --privileged --rm -i -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
+        sh <<"ISOEOF"
     set -xeuo pipefail
     sudo dnf install -y grub2 grub2-efi grub2-tools-extra xorriso
-    grub2-mkrescue --xorriso=/app/src/xorriso_wrapper.sh -o /app/output.iso /app/{{ isoroot }}"
+    grub2-mkrescue --xorriso=/app/src/xorriso_wrapper.sh -o /app/output.iso /app/{{ isoroot }}
+    ISOEOF
 
 build image livecd_user="0" clean_rootfs="1":
     #!/usr/bin/env bash
@@ -117,7 +120,7 @@ clean clean_rootfs="1":
     sudo rm -rf output.iso
     [ "{{ rootfs_clean }}" == "1" ] && sudo rm -rf {{ workdir }}
 
-vm *ARGS:
+vm ISO_FILE *ARGS:
     #!/usr/bin/env bash
     qemu="qemu-system-$(arch)"
     if [[ ! $(type -P "$qemu") ]]; then
@@ -133,4 +136,4 @@ vm *ARGS:
         -net user,hostfwd=tcp::2222-:22 \
         -display gtk \
         -boot d \
-        -cdrom {{ ARGS }}
+        -cdrom {{ ISO_FILE }} {{ ARGS }}

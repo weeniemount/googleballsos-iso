@@ -173,6 +173,6 @@ vm ISO_FILE *ARGS:
         -m 4G \
         -net nic,model=virtio \
         -net user,hostfwd=tcp::2222-:22 \
-        -display gtk \
+        -display gtk,show-cursor=on \
         -boot d \
         -cdrom {{ ISO_FILE }} {{ ARGS }}

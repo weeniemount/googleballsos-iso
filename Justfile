@@ -73,7 +73,7 @@ copy-into-rootfs: init-work
     rsync -aP src/system/ $ROOTFS
     mkdir -p $ROOTFS
 
-install-livesys-scripts: init-work
+rootfs-install-livesys-scripts: init-work
     #!/usr/bin/env bash
     set -xeuo pipefail
     ROOTFS="{{ workdir }}/rootfs"

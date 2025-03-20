@@ -93,10 +93,12 @@ squash $IMAGE: init-work
     if [ -e "{{ workdir }}/squashfs.img" ] ; then
         exit 0
     fi
-    sudo podman run --privileged --rm -it -v .:/app:Z -v "./${ROOTFS}:/rootfs:Z" "${IMAGE}" sh -c "
+    sudo podman run --privileged --rm -i -v .:/app:Z -v "./${ROOTFS}:/rootfs:Z" "${IMAGE}" \
+        sh <<"SQUASHEOF"
     set -xeuo pipefail
     sudo dnf install -y squashfs-tools
-    mksquashfs /rootfs /app/{{ workdir }}/squashfs.img -all-root"
+    mksquashfs /rootfs /app/{{ workdir }}/squashfs.img -all-root
+    SQUASHEOF
 
 iso-organize: init-work
     #!/usr/bin/env bash

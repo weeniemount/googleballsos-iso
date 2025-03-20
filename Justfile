@@ -55,6 +55,13 @@ rootfs-include-container $IMAGE:
     sudo curl -fSsLo "${ROOTFS}/usr/bin/fuse-overlayfs" "https://github.com/containers/fuse-overlayfs/releases/download/v1.14/fuse-overlayfs-$(arch)"
     sudo chmod +x "${ROOTFS}/usr/bin/fuse-overlayfs"
 
+copy-into-rootfs: init-work
+    #!/usr/bin/env bash
+    set -xeuo pipefail
+    ROOTFS="{{ workdir }}/rootfs"
+    rsync -aP src/system/ $ROOTFS
+    mkdir -p $ROOTFS
+
 squash $IMAGE: init-work
     #!/usr/bin/env bash
     set -xeuo pipefail
@@ -86,15 +93,20 @@ iso:
     sudo dnf install -y grub2 grub2-efi grub2-tools-extra xorriso
     grub2-mkrescue --xorriso=/app/src/xorriso_wrapper.sh -o /app/output.iso /app/{{ isoroot }}"
 
-build $IMAGE:
+build image livecd_user="0":
     #!/usr/bin/env bash
     set -xeuo pipefail
     just clean
-    just initramfs "${IMAGE}"
-    just rootfs "${IMAGE}"
+    just initramfs "{{ image }}"
+    just rootfs "{{ image }}"
     just rootfs-setuid
-    just rootfs-include-container "${IMAGE}"
-    just squash "${IMAGE}"
+    #just rootfs-include-container "{{ image }}"
+
+    if [[ {{ livecd_user }} == 1 ]]; then
+      just copy-into-rootfs
+    fi
+
+    just squash "{{ image }}"
     just iso-organize
     just iso
 
@@ -115,7 +127,7 @@ vm *ARGS:
         -enable-kvm \
         -M q35 \
         -cpu host \
-        -smp 1 \
+        -smp $(( $(nproc) / 2 > 0 ? $(nproc) / 2 : 1 )) \
         -m 4G \
         -net nic,model=virtio \
         -net user,hostfwd=tcp::2222-:22 \

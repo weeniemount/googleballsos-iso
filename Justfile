@@ -18,6 +18,7 @@ initramfs $IMAGE: init-work
     #!/usr/bin/env bash
     # THIS NEEDS dracut-live
     set -xeuo pipefail
+    sudo podman pull $IMAGE
     sudo podman run --privileged --rm -i -v .:/app:Z $IMAGE \
         sh <<'INITRAMFSEOF'
     set -xeuo pipefail
@@ -65,13 +66,6 @@ rootfs-include-container $IMAGE:
     sudo podman push "${IMAGE}" "containers-storage:[overlay@$(realpath "$ROOTFS")/var/lib/containers/storage]$IMAGE"
     sudo curl -fSsLo "${ROOTFS}/usr/bin/fuse-overlayfs" "https://github.com/containers/fuse-overlayfs/releases/download/v1.14/fuse-overlayfs-$(arch)"
     sudo chmod +x "${ROOTFS}/usr/bin/fuse-overlayfs"
-
-copy-into-rootfs: init-work
-    #!/usr/bin/env bash
-    set -xeuo pipefail
-    ROOTFS="{{ workdir }}/rootfs"
-    rsync -aP src/system/ $ROOTFS
-    mkdir -p $ROOTFS
 
 rootfs-install-livesys-scripts: init-work
     #!/usr/bin/env bash
@@ -140,7 +134,7 @@ iso:
     grub2-mkrescue --xorriso=/app/src/xorriso_wrapper.sh -o /app/output.iso /app/{{ isoroot }}
     ISOEOF
 
-build image livecd_user="0" clean_rootfs="1":
+build image livesys="0" clean_rootfs="1":
     #!/usr/bin/env bash
     set -xeuo pipefail
     just clean "{{ clean_rootfs }}"
@@ -149,8 +143,8 @@ build image livecd_user="0" clean_rootfs="1":
     just rootfs-setuid
     #just rootfs-include-container "{{ image }}"
 
-    if [[ {{ livecd_user }} == 1 ]]; then
-      just copy-into-rootfs
+    if [[ {{ livesys }} == 1 ]]; then
+      just rootfs-install-livesys-scripts
     fi
 
     just squash "{{ image }}"

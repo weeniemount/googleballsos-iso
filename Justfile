@@ -152,6 +152,7 @@ build image livesys="0" clean_rootfs="1":
     just iso
 
 clean clean_rootfs="1":
+    #!/usr/bin/env bash
     sudo umount work/rootfs/var/lib/containers/storage/overlay/ || true
     sudo umount work/rootfs/containers/storage/overlay/ || true
     sudo umount work/iso-root/containers/storage/overlay/ || true

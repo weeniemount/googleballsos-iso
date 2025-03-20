@@ -90,7 +90,7 @@ rootfs-install-livesys-scripts: init-work
     _session_file="$(find /usr/share/wayland-sessions/ /usr/share/xsessions \
         -maxdepth 1 -type f -name '*.desktop' -printf '%P' -quit)"
     case $_session_file in
-    # TODO: add more sessions.
+    # TODO (@Zeglius Thu Mar 20 2025): add more sessions.
     plasma.desktop) desktop_env=kde   ;;
     gnome*)         desktop_env=gnome ;;
     xfce.desktop)   desktop_env=xfce  ;;

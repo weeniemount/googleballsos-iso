@@ -1,6 +1,15 @@
 workdir := env("TITANOBOA_WORKDIR", "work")
 isoroot := env("TITANOBOA_ISO_ROOT", "work/iso-root")
 
+### UTILS TEMPLATES ###
+# Stuff that comes handy to avoid repeating too much in the recipes
+# (per ex.: a recurrent bash function definition).
+
+# A bash snippet used to print the location of dnf5, or dnf as a fallback.
+# To be used inside `podman run`.
+tmpl_search_for_dnf := '{ which dnf5 || which dnf; } 2>/dev/null'
+#######################
+
 init-work:
     mkdir -p {{ workdir }}
     mkdir -p {{ isoroot }}
@@ -16,12 +25,12 @@ initramfs $IMAGE: init-work
     INSTALLED_KERNEL=$(rpm -q kernel-core --queryformat "%{evr}.%{arch}" | tail -n 1)
     cat >/app/work/fake-uname <<EOF
     #!/usr/bin/env bash
-    
+
     if [ "\$1" == "-r" ] ; then
       echo ${INSTALLED_KERNEL}
       exit 0
     fi
-    
+
     exec /usr/bin/uname \$@
     EOF
     install -Dm0755 /app/work/fake-uname /var/tmp/bin/uname
@@ -64,6 +73,39 @@ copy-into-rootfs: init-work
     rsync -aP src/system/ $ROOTFS
     mkdir -p $ROOTFS
 
+rootfs-install-livesys-scripts: init-work
+    #!/usr/bin/env bash
+    set -xeuo pipefail
+    ROOTFS="{{ workdir }}/rootfs"
+    sudo podman run --security-opt label=type:unconfined_t -i --rootfs "$(realpath ${ROOTFS})" /usr/bin/bash \
+    <<"LIVESYSEOF"
+    set -xeuo pipefail
+    dnf="$({{tmpl_search_for_dnf}})"
+    $dnf install -y livesys-scripts
+
+    # Determine desktop environment. Must match one of /usr/libexec/livesys/sessions.d/livesys-{desktop_env}
+    desktop_env=""
+    # We can tell what desktop environment we are targeting by looking at
+    # the session files. Lets decide by the first file found.
+    _session_file="$(find /usr/share/wayland-sessions/ /usr/share/xsessions \
+        -maxdepth 1 -type f -name '*.desktop' -printf '%P' -quit)"
+    case $_session_file in
+    # TODO (@Zeglius Thu Mar 20 2025): add more sessions.
+    plasma.desktop) desktop_env=kde   ;;
+    gnome*)         desktop_env=gnome ;;
+    xfce.desktop)   desktop_env=xfce  ;;
+    *)
+        echo "ERROR[rootfs-install-livesys-scripts]: no matching desktop enviroment found"\
+            " at /usr/share/wayland-sessions/ /usr/share/xsessions";
+        exit 1
+    ;;
+    esac && unset -v _session_file
+    sed -i "s/^livesys_session=.*/livesys_session=${desktop_env}/" /etc/sysconfig/livesys
+
+    # Enable services
+    systemctl enable livesys.service livesys-late.service
+    LIVESYSEOF
+
 squash $IMAGE: init-work
     #!/usr/bin/env bash
     set -xeuo pipefail
@@ -72,10 +114,12 @@ squash $IMAGE: init-work
     if [ -e "{{ workdir }}/squashfs.img" ] ; then
         exit 0
     fi
-    sudo podman run --privileged --rm -it -v .:/app:Z -v "./${ROOTFS}:/rootfs:Z" "${IMAGE}" sh -c "
+    sudo podman run --privileged --rm -i -v .:/app:Z -v "./${ROOTFS}:/rootfs:Z" "${IMAGE}" \
+        sh <<"SQUASHEOF"
     set -xeuo pipefail
     sudo dnf install -y squashfs-tools
-    mksquashfs /rootfs /app/{{ workdir }}/squashfs.img -all-root"
+    mksquashfs /rootfs /app/{{ workdir }}/squashfs.img -all-root
+    SQUASHEOF
 
 iso-organize: init-work
     #!/usr/bin/env bash
@@ -118,7 +162,7 @@ clean clean_rootfs="1":
     sudo umount work/rootfs/containers/storage/overlay/ || true
     sudo umount work/iso-root/containers/storage/overlay/ || true
     sudo rm -rf output.iso
-    [ "{{ rootfs_clean }}" == "1" ] && sudo rm -rf {{ workdir }}
+    [ "{{ clean_rootfs }}" == "1" ] && sudo rm -rf {{ workdir }}
 
 vm ISO_FILE *ARGS:
     #!/usr/bin/env bash

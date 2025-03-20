@@ -100,7 +100,7 @@ build image livecd_user="0":
     just initramfs "{{ image }}"
     just rootfs "{{ image }}"
     just rootfs-setuid
-    just rootfs-include-container "{{ image }}"
+    #just rootfs-include-container "{{ image }}"
 
     if [[ {{ livecd_user }} == 1 ]]; then
       just copy-into-rootfs
@@ -127,7 +127,7 @@ vm *ARGS:
         -enable-kvm \
         -M q35 \
         -cpu host \
-        -smp 1 \
+        -smp $(( $(nproc) / 2 > 0 ? $(nproc) / 2 : 1 )) \
         -m 4G \
         -net nic,model=virtio \
         -net user,hostfwd=tcp::2222-:22 \

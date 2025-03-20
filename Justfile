@@ -16,12 +16,12 @@ initramfs $IMAGE: init-work
     INSTALLED_KERNEL=$(rpm -q kernel-core --queryformat "%{evr}.%{arch}" | tail -n 1)
     cat >/app/work/fake-uname <<EOF
     #!/usr/bin/env bash
-    
+
     if [ "\$1" == "-r" ] ; then
       echo ${INSTALLED_KERNEL}
       exit 0
     fi
-    
+
     exec /usr/bin/uname \$@
     EOF
     install -Dm0755 /app/work/fake-uname /var/tmp/bin/uname
@@ -118,7 +118,7 @@ clean clean_rootfs="1":
     sudo umount work/rootfs/containers/storage/overlay/ || true
     sudo umount work/iso-root/containers/storage/overlay/ || true
     sudo rm -rf output.iso
-    [ "{{ rootfs_clean }}" == "1" ] && sudo rm -rf {{ workdir }}
+    [ "{{ clean_rootfs }}" == "1" ] && sudo rm -rf {{ workdir }}
 
 vm ISO_FILE *ARGS:
     #!/usr/bin/env bash

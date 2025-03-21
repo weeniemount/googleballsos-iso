@@ -10,6 +10,9 @@ isoroot := env("TITANOBOA_ISO_ROOT", "work/iso-root")
 tmpl_search_for_dnf := '{ which dnf5 || which dnf; } 2>/dev/null'
 #######################
 
+export SUDO_DISPLAY := if `if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then echo true; fi` == "true" { "true" } else { "false" }
+export SUDOIF := if `id -u` == "0" { "" } else if SUDO_DISPLAY == "true" { "sudo --askpass" } else { "sudo" }
+
 init-work:
     mkdir -p {{ workdir }}
     mkdir -p {{ isoroot }}
@@ -18,11 +21,11 @@ initramfs $IMAGE: init-work
     #!/usr/bin/env bash
     # THIS NEEDS dracut-live
     set -xeuo pipefail
-    # sudo podman pull $IMAGE
-    sudo podman run --privileged --rm -i -v .:/app:Z $IMAGE \
+    # ${SUDOIF} podman pull $IMAGE
+    ${SUDOIF} podman run --privileged --rm -i -v .:/app:Z $IMAGE \
         sh <<'INITRAMFSEOF'
     set -xeuo pipefail
-    sudo dnf install -y dracut dracut-live kernel
+    dnf install -y dracut dracut-live kernel
     INSTALLED_KERNEL=$(rpm -q kernel-core --queryformat "%{evr}.%{arch}" | tail -n 1)
     cat >/app/work/fake-uname <<EOF
     #!/usr/bin/env bash
@@ -44,8 +47,8 @@ rootfs $IMAGE: init-work
     set -xeuo pipefail
     ROOTFS="{{ workdir }}/rootfs"
     mkdir -p $ROOTFS
-    ctr="$(sudo podman create --rm "${IMAGE}")" && trap "sudo podman rm $ctr" EXIT
-    sudo podman export $ctr | tar -xf - -C "${ROOTFS}"
+    ctr="$(${SUDOIF} podman create --rm "${IMAGE}")" && trap "${SUDOIF} podman rm $ctr" EXIT
+    ${SUDOIF} podman export $ctr | tar -xf - -C "${ROOTFS}"
 
     # Make /var/tmp be a tmpfs by symlinking to /tmp,
     # in order to make bootc work at runtime.
@@ -56,7 +59,7 @@ rootfs-setuid:
     #!/usr/bin/env bash
     set -xeuo pipefail
     ROOTFS="{{ workdir }}/rootfs"
-    sudo sh -c "
+    ${SUDOIF} sh -c "
     for file in usr/bin/sudo usr/lib/polkit-1/polkit-agent-helper-1 usr/bin/passwd /usr/bin/pkexec ; do
         chmod u+s ${ROOTFS}/\${file}
     done"
@@ -66,12 +69,12 @@ rootfs-include-container $IMAGE:
     set -xeuo pipefail
     ROOTFS="{{ workdir }}/rootfs"
     # Needs to exist so that we can mount to it
-    sudo mkdir -p "${ROOTFS}/var/lib/containers/storage"
+    ${SUDOIF} mkdir -p "${ROOTFS}/var/lib/containers/storage"
     # Remove signatures as signed images get super mad when you do this
-    sudo podman push "${IMAGE}" "containers-storage:[overlay@$(realpath "$ROOTFS")/var/lib/containers/storage]$IMAGE" --remove-signatures
+    ${SUDOIF} podman push "${IMAGE}" "containers-storage:[overlay@$(realpath "$ROOTFS")/var/lib/containers/storage]$IMAGE" --remove-signatures
     # We need this in the rootfs specifically so that bootc can know what images are on disk via podman
-    sudo curl -fSsLo "${ROOTFS}/usr/bin/fuse-overlayfs" "https://github.com/containers/fuse-overlayfs/releases/download/v1.14/fuse-overlayfs-$(arch)"
-    sudo chmod +x "${ROOTFS}/usr/bin/fuse-overlayfs"
+    ${SUDOIF} curl -fSsLo "${ROOTFS}/usr/bin/fuse-overlayfs" "https://github.com/containers/fuse-overlayfs/releases/download/v1.14/fuse-overlayfs-$(arch)"
+    ${SUDOIF} chmod +x "${ROOTFS}/usr/bin/fuse-overlayfs"
 
 rootfs-include-flatpaks $FLATPAKS_FILE="src/flatpaks.example.txt":
     #!/usr/bin/env bash
@@ -83,12 +86,12 @@ rootfs-include-flatpaks $FLATPAKS_FILE="src/flatpaks.example.txt":
     ROOTFS="{{ workdir }}/rootfs"
 
     set -xeuo pipefail
-    sudo podman run --privileged --rm -i -v ".:/app:Z" -v "./${ROOTFS}:/rootfs:Z" registry.fedoraproject.org/fedora:41 \
+    ${SUDOIF} podman run --privileged --rm -i -v ".:/app:Z" -v "./${ROOTFS}:/rootfs:Z" registry.fedoraproject.org/fedora:41 \
     <<"LIVESYSEOF"
     set -xeuo pipefail
-    sudo dnf install -y flatpak
-    sudo mkdir -p /etc/flatpak/installations.d /rootfs/var/lib/flatpak
-    sudo tee /etc/flatpak/installations.d/liveiso.conf <<EOF
+    dnf install -y flatpak
+    mkdir -p /etc/flatpak/installations.d /rootfs/var/lib/flatpak
+    tee /etc/flatpak/installations.d/liveiso.conf <<EOF
     [Installation "liveiso"]
     Path=/rootfs/var/lib/flatpak/
     EOF
@@ -100,7 +103,7 @@ rootfs-install-livesys-scripts: init-work
     #!/usr/bin/env bash
     set -xeuo pipefail
     ROOTFS="{{ workdir }}/rootfs"
-    sudo podman run --security-opt label=type:unconfined_t -i --rootfs "$(realpath ${ROOTFS})" /usr/bin/bash \
+    ${SUDOIF} podman run --security-opt label=type:unconfined_t -i --rootfs "$(realpath ${ROOTFS})" /usr/bin/bash \
     <<"LIVESYSEOF"
     set -xeuo pipefail
     dnf="$({{tmpl_search_for_dnf}})"
@@ -137,10 +140,10 @@ squash $IMAGE: init-work
     if [ -e "{{ workdir }}/squashfs.img" ] ; then
         exit 0
     fi
-    sudo podman run --privileged --rm -i -v ".:/app:Z" -v "./${ROOTFS}:/rootfs:Z" registry.fedoraproject.org/fedora:41 \
+    ${SUDOIF} podman run --privileged --rm -i -v ".:/app:Z" -v "./${ROOTFS}:/rootfs:Z" registry.fedoraproject.org/fedora:41 \
         sh <<"SQUASHEOF"
     set -xeuo pipefail
-    sudo dnf install -y squashfs-tools
+    dnf install -y squashfs-tools
     mksquashfs /rootfs /app/{{ workdir }}/squashfs.img -all-root
     SQUASHEOF
 
@@ -150,16 +153,20 @@ iso-organize: init-work
     mkdir -p {{ isoroot }}/boot/grub {{ isoroot }}/LiveOS
     cp src/grub.cfg {{ isoroot }}/boot/grub
     cp {{ workdir }}/rootfs/lib/modules/*/vmlinuz {{ isoroot }}/boot
-    sudo cp {{ workdir }}/initramfs.img {{ isoroot }}/boot
-    sudo mv {{ workdir }}/squashfs.img {{ isoroot }}/LiveOS/squashfs.img
+    ${SUDOIF} cp {{ workdir }}/initramfs.img {{ isoroot }}/boot
+    ${SUDOIF} mv {{ workdir }}/squashfs.img {{ isoroot }}/LiveOS/squashfs.img
 
 iso:
     #!/usr/bin/env bash
     set -xeuo pipefail
-    sudo podman run --privileged --rm -i -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
+    ${SUDOIF} podman run --privileged --rm -i -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
         sh <<"ISOEOF"
     set -xeuo pipefail
+<<<<<<< HEAD
     sudo dnf install -y grub2 grub2-efi grub2-efi-x64-modules grub2-efi-x64-cdboot grub2-efi-x64 grub2-tools-extra xorriso
+=======
+    dnf install -y grub2 grub2-efi grub2-efi-x64-cdboot grub2-efi-x64 grub2-tools-extra xorriso
+>>>>>>> 9ffdff9 (feat: introduce SUDOIF)
     grub2-mkrescue --xorriso=/app/src/xorriso_wrapper.sh -o /app/output.iso /app/{{ isoroot }}
     ISOEOF
 
@@ -183,11 +190,11 @@ build image livesys="0" clean_rootfs="1" flatpaks_file="src/flatpaks.example.txt
 
 clean clean_rootfs="1":
     #!/usr/bin/env bash
-    sudo umount work/rootfs/var/lib/containers/storage/overlay/ || true
-    sudo umount work/rootfs/containers/storage/overlay/ || true
-    sudo umount work/iso-root/containers/storage/overlay/ || true
-    sudo rm -rf output.iso
-    [ "{{ clean_rootfs }}" == "1" ] && sudo rm -rf {{ workdir }}
+    ${SUDOIF} umount work/rootfs/var/lib/containers/storage/overlay/ || true
+    ${SUDOIF} umount work/rootfs/containers/storage/overlay/ || true
+    ${SUDOIF} umount work/iso-root/containers/storage/overlay/ || true
+    ${SUDOIF} rm -rf output.iso
+    [ "{{ clean_rootfs }}" == "1" ] && ${SUDOIF} rm -rf {{ workdir }}
 
 vm ISO_FILE *ARGS:
     #!/usr/bin/env bash

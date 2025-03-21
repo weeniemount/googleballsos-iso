@@ -64,6 +64,9 @@ rootfs-include-container $IMAGE:
     sudo mkdir -p "${ROOTFS}/var/lib/containers/storage"
     # Remove signatures as signed images get super mad when you do this
     sudo podman push "${IMAGE}" "containers-storage:[overlay@$(realpath "$ROOTFS")/var/lib/containers/storage]$IMAGE" --remove-signatures
+    # We need this in the rootfs specifically so that bootc can know what images are on disk via podman
+    sudo curl -fSsLo "${ROOTFS}/usr/bin/fuse-overlayfs" "https://github.com/containers/fuse-overlayfs/releases/download/v1.14/fuse-overlayfs-$(arch)"
+    sudo chmod +x "${ROOTFS}/usr/bin/fuse-overlayfs"
 
 rootfs-include-flatpaks $FLATPAKS_FILE="src/flatpaks.example.txt":
     #!/usr/bin/env bash
@@ -151,7 +154,7 @@ iso:
     sudo podman run --privileged --rm -i -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
         sh <<"ISOEOF"
     set -xeuo pipefail
-    sudo dnf install -y grub2 grub2-efi grub2-efi-x64-cdboot grub2-efi-x64 grub2-tools-extra xorriso
+    sudo dnf install -y grub2 grub2-efi grub2-efi-x64-modules grub2-efi-x64-cdboot grub2-efi-x64 grub2-tools-extra xorriso
     grub2-mkrescue --xorriso=/app/src/xorriso_wrapper.sh -o /app/output.iso /app/{{ isoroot }}
     ISOEOF
 

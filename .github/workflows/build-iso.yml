@@ -1,0 +1,28 @@
+name: test-bluefin
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  iso:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          # this might remove tools that are actually needed,
+          # if set to "true" but frees about 6 GB
+          tool-cache: false
+
+      - name: Checkout Titanoboa
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y just podman
+
+      - name: Build ISO
+        run: |
+          cd titanoboa
+          just build ghcr.io/ublue-os/bluefin:stable latest 1

@@ -47,7 +47,7 @@ rootfs $IMAGE: init-work
     set -xeuo pipefail
     ROOTFS="{{ workdir }}/rootfs"
     mkdir -p $ROOTFS
-    ctr="$(${SUDOIF} podman create --rm "${IMAGE}")" && trap "${SUDOIF} podman rm $ctr" EXIT
+    ctr="$(${SUDOIF} podman create --rm "${IMAGE}" /bin/bash)" && trap "${SUDOIF} podman rm $ctr" EXIT
     ${SUDOIF} podman export $ctr | tar -xf - -C "${ROOTFS}"
 
     # Make /var/tmp be a tmpfs by symlinking to /tmp,

@@ -47,6 +47,11 @@ rootfs $IMAGE: init-work
     ctr="$(sudo podman create --rm "${IMAGE}")" && trap "sudo podman rm $ctr" EXIT
     sudo podman export $ctr | tar -xf - -C "${ROOTFS}"
 
+    # Make /var/tmp be a tmpfs by symlinking to /tmp,
+    # in order to make bootc work at runtime.
+    rm -r "$ROOTFS"/var/tmp
+    ln -sr "$ROOTFS"/tmp "$ROOTFS"/var/tmp
+
 rootfs-setuid:
     #!/usr/bin/env bash
     set -xeuo pipefail

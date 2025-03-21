@@ -162,11 +162,7 @@ iso:
     ${SUDOIF} podman run --privileged --rm -i -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
         sh <<"ISOEOF"
     set -xeuo pipefail
-<<<<<<< HEAD
-    sudo dnf install -y grub2 grub2-efi grub2-efi-x64-modules grub2-efi-x64-cdboot grub2-efi-x64 grub2-tools-extra xorriso
-=======
-    dnf install -y grub2 grub2-efi grub2-efi-x64-cdboot grub2-efi-x64 grub2-tools-extra xorriso
->>>>>>> 9ffdff9 (feat: introduce SUDOIF)
+    dnf install -y grub2 grub2-efi grub2-efi-x64-modules grub2-efi-x64-cdboot grub2-efi-x64 grub2-tools-extra xorriso
     grub2-mkrescue --xorriso=/app/src/xorriso_wrapper.sh -o /app/output.iso /app/{{ isoroot }}
     ISOEOF
 

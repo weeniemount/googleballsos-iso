@@ -24,5 +24,4 @@ jobs:
 
       - name: Build ISO
         run: |
-          cd titanoboa
           just build ghcr.io/ublue-os/bluefin:stable latest 1

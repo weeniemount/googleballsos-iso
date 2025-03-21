@@ -24,4 +24,4 @@ jobs:
 
       - name: Build ISO
         run: |
-          just build ghcr.io/ublue-os/bluefin:stable latest 1
+          just build ghcr.io/ublue-os/bluefin:lts latest 1

@@ -15,6 +15,11 @@ This is an experiment to see how far we can get building our own ISOs. The objec
 
 Waiting for existing installers to move to cloud native is untenable, let's see if we can remove that external dependency forever. 😈
 
+## Components
+
+- LiveCD (done in this repository)
+- [ublue-os/yai](https://github.com/ublue-os/yai) - Tauri bootc install wrapper
+
 ## Building a Live ISO
 
 ```bash

@@ -161,17 +161,16 @@ iso:
     sudo podman run --privileged --rm -i -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
         sh <<"ISOEOF"
     set -xeuo pipefail
-    ISOROOT={{ isoroot }}
-    WORKDIR={{ workdir }}
-    # Lorax for mkefiboot
-    sudo dnf install -y grub2 grub2-efi grub2-efi-x64-modules grub2-efi-x64-cdboot grub2-efi-x64 grub2-tools grub2-tools-extra xorriso shim
+    ISOROOT=$(realpath {{ isoroot }})
+    WORKDIR=$(realpath {{ workdir }})
+    sudo dnf install -y grub2 grub2-efi grub2-efi-x64-modules grub2-efi-x64-cdboot grub2-efi-x64 grub2-tools grub2-tools-extra xorriso shim dosfstools
     mkdir -p $ISOROOT/EFI/BOOT
-    cp -av /boot/efi/EFI/fedora/. $ISOROOT/EFI/BOOT
-    cp -av $ISOROOT/boot/grub/grub.cfg $ISOROOT/EFI/BOOT/BOOT.conf
-    cp -av $ISOROOT/boot/grub/grub.cfg $ISOROOT/EFI/BOOT/grub.cfg
-    cp -av /boot/grub*/fonts/unicode.pf2 $ISOROOT/EFI/BOOT/fonts
-    cp -av $ISOROOT/EFI/BOOT/shimx64.efi $ISOROOT/EFI/BOOT/BOOTX64.efi
-    cp -av $ISOROOT/EFI/BOOT/shim.efi $ISOROOT/EFI/BOOT/BOOTia32.efi
+    cp -avf /boot/efi/EFI/fedora/. $ISOROOT/EFI/BOOT
+    cp -avf $ISOROOT/boot/grub/grub.cfg $ISOROOT/EFI/BOOT/BOOT.conf
+    cp -avf $ISOROOT/boot/grub/grub.cfg $ISOROOT/EFI/BOOT/grub.cfg
+    cp -avf /boot/grub*/fonts/unicode.pf2 $ISOROOT/EFI/BOOT/fonts
+    cp -avf $ISOROOT/EFI/BOOT/shimx64.efi $ISOROOT/EFI/BOOT/BOOTX64.efi
+    cp -avf $ISOROOT/EFI/BOOT/shim.efi $ISOROOT/EFI/BOOT/BOOTia32.efi
 
     grub2-mkimage -O i386-pc-eltorito -d /usr/lib/grub/i386-pc -o $ISOROOT/boot/eltorito.img -p /boot/grub iso9660 biosdisk
     grub2-mkrescue -o $ISOROOT/../efiboot.img
@@ -180,13 +179,12 @@ iso:
     mount $ISOROOT/../efiboot.img $EFI_BOOT_MOUNT
     cp -r $EFI_BOOT_MOUNT/boot/grub $ISOROOT/boot/
     umount $EFI_BOOT_MOUNT
-    rm -r $EFI_BOOT_MOUNT
+    rm -rf $EFI_BOOT_MOUNT
 
     # https://github.com/FyraLabs/katsu/blob/1e26ecf74164c90bc24299a66f8495eb2aef4845/src/builder.rs#L145
     EFI_BOOT_PART=$(mktemp -d)
-    rm -f $WORKDIR/efiboot.img
     fallocate $WORKDIR/efiboot.img -l 15M
-    mkfs.msdos -v -n EFI $WORKDIR/../efiboot.img
+    mkfs.msdos -v -n EFI $WORKDIR/efiboot.img
     mount $WORKDIR/efiboot.img $EFI_BOOT_PART
     mkdir -p $EFI_BOOT_PART/EFI/BOOT
     cp -avr $ISOROOT/EFI/BOOT/. $EFI_BOOT_PART/EFI/BOOT

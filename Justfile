@@ -21,7 +21,7 @@ initramfs $IMAGE: init-work
     sudo podman run --privileged --rm -i -v .:/app:Z $IMAGE \
         sh <<'INITRAMFSEOF'
     set -xeuo pipefail
-    sudo dnf install -y dracut dracut-live kernel
+    dnf install -y dracut dracut-live kernel
     INSTALLED_KERNEL=$(rpm -q kernel-core --queryformat "%{evr}.%{arch}" | tail -n 1)
     cat >/app/work/fake-uname <<EOF
     #!/usr/bin/env bash
@@ -44,7 +44,7 @@ rootfs $IMAGE: init-work
     set -xeuo pipefail
     ROOTFS="{{ workdir }}/rootfs"
     mkdir -p $ROOTFS
-    ctr="$(sudo podman create --rm "${IMAGE}")" && trap "sudo podman rm $ctr" EXIT
+    ctr="$(sudo podman create --rm "${IMAGE}" /usr/bin/bash)" && trap "sudo podman rm $ctr" EXIT
     sudo podman export $ctr | tar -xf - -C "${ROOTFS}"
 
     # Make /var/tmp be a tmpfs by symlinking to /tmp,
@@ -75,7 +75,7 @@ squash-container $IMAGE:
     sudo chmod +x "${ROOTFS}/usr/bin/fuse-overlayfs"
     sudo podman run --privileged --rm -i -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
     sh <<"CONTAINEREOF"
-    sudo dnf install -y erofs-utils
+    dnf install -y erofs-utils
     mkfs.erofs --quiet --all-root -zlz4hc,6 -Eall-fragments,fragdedupe=inode -C1048576 /app/{{ workdir }}/container.img /app/{{ workdir }}/containers-storage
     CONTAINEREOF
     sudo umount "{{ workdir }}/containers-storage/overlay"
@@ -95,15 +95,15 @@ squash-flatpaks $FLATPAKS_FILE="src/flatpaks.example.txt":
     sudo podman run --privileged --rm -i -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
     <<"LIVESYSEOF"
     set -xeuo pipefail
-    sudo dnf install -y flatpak erofs-utils
-    sudo mkdir -p /etc/flatpak/installations.d /app/{{ workdir }}/flatpak
-    sudo tee /etc/flatpak/installations.d/liveiso.conf <<EOF
+    dnf install -y flatpak erofs-utils
+    mkdir -p /etc/flatpak/installations.d /app/{{ workdir }}/flatpak
+    tee /etc/flatpak/installations.d/liveiso.conf <<EOF
     [Installation "liveiso"]
     Path=/app/{{ workdir }}/flatpak
     EOF
     flatpak remote-add --installation=liveiso --if-not-exists flathub "https://dl.flathub.org/repo/flathub.flatpakrepo"
     cat /app/{{ FLATPAKS_FILE }} | xargs flatpak install -y --installation=liveiso
-    mkfs.erofs --all-root -zlz4hc,6 -Eall-fragments,fragdedupe=inode -C1048576 /app/{{ workdir }}/flatpak.img /app/{{ workdir }}/flatpak
+    mkfs.erofs --quiet --all-root -zlz4hc,6 -Eall-fragments,fragdedupe=inode -C1048576 /app/{{ workdir }}/flatpak.img /app/{{ workdir }}/flatpak
     rm -f /etc/flatpak/installations.d/liveiso.conf
     rm -rf /app/{{ workdir }}/flatpak
     LIVESYSEOF
@@ -141,6 +141,16 @@ rootfs-install-livesys-scripts: init-work
     systemctl enable livesys.service livesys-late.service
     LIVESYSEOF
 
+# Hook used for custom operations done in the rootfs before it is squashed.
+# Only accept inputs by stdin. Meant to be used in a GH action.
+[private]
+hook-post-rootfs: init-work
+    #!/usr/bin/env bash
+    set -xeuo pipefail
+    ROOTFS="{{ workdir }}/rootfs"
+    sudo podman run --rm --security-opt label=type:unconfined_t -i -v ".:/app:Z" --rootfs "$(realpath ${ROOTFS})" /usr/bin/bash \
+        </dev/stdin
+
 squash: init-work
     #!/usr/bin/env bash
     set -xeuo pipefail
@@ -152,7 +162,7 @@ squash: init-work
     sudo podman run --privileged --rm -i -v ".:/app:Z" -v "./${ROOTFS}:/rootfs:Z" registry.fedoraproject.org/fedora:41 \
         sh <<"SQUASHEOF"
     set -xeuo pipefail
-    sudo dnf install -y erofs-utils
+    dnf install -y erofs-utils
     mkfs.erofs --quiet --all-root -zlz4hc,6 -Eall-fragments,fragdedupe=inode -C1048576 /app/{{ workdir }}/squashfs.img /rootfs
     SQUASHEOF
 
@@ -180,7 +190,7 @@ iso:
     set -x
     ISOROOT=$(realpath /app/{{ isoroot }})
     WORKDIR=$(realpath /app/{{ workdir }})
-    sudo dnf install -y grub2 grub2-efi grub2-efi-x64-modules grub2-efi-x64-cdboot grub2-efi-x64 grub2-tools grub2-tools-extra xorriso shim dosfstools
+    dnf install -y grub2 grub2-efi grub2-efi-x64-modules grub2-efi-x64-cdboot grub2-efi-x64 grub2-tools grub2-tools-extra xorriso shim dosfstools
     mkdir -p $ISOROOT/EFI/BOOT
     cp -avf /boot/efi/EFI/fedora/. $ISOROOT/EFI/BOOT
     cp -avf $ISOROOT/boot/grub/grub.cfg $ISOROOT/EFI/BOOT/BOOT.conf
@@ -213,6 +223,12 @@ iso:
 build image livesys="0" clean_rootfs="1" flatpaks_file="src/flatpaks.example.txt":
     #!/usr/bin/env bash
     set -xeuo pipefail
+
+    # We pass hooks contents with file descriptors:
+    # - 3: hook_post_rootfs
+    unset -v hook_post_rootfs 2>/dev/null || :
+    { readarray -d'' -t hook_post_rootfs <&3; } 2>/dev/null || :
+
     just clean "{{ clean_rootfs }}"
     just initramfs "{{ image }}"
     just rootfs "{{ image }}"
@@ -224,6 +240,11 @@ build image livesys="0" clean_rootfs="1" flatpaks_file="src/flatpaks.example.txt
       just rootfs-install-livesys-scripts
     fi
 
+    # Run hooks
+    if [[ -v hook-post-rootfs ]]; then
+      just hook-post-rootfs <<<"hook_post_rootfs"
+    fi
+
     just squash
     just iso-organize
     just iso
@@ -233,7 +254,6 @@ clean clean_rootfs="1":
     sudo umount work/rootfs/var/lib/containers/storage/overlay/ || true
     sudo umount work/rootfs/containers/storage/overlay/ || true
     sudo umount work/iso-root/containers/storage/overlay/ || true
-    sudo rm -rf output.iso
     [ "{{ clean_rootfs }}" == "1" ] && sudo rm -rf {{ workdir }}
 
 vm ISO_FILE *ARGS:
@@ -284,3 +304,8 @@ container-run-vm ISO_FILE:
     # Run the VM and open the browser to connect
     podman run "${run_args[@]}" &
     xdg-open http://localhost:${port}
+
+# Print the absolute of the files relative to the project dir.
+[private]
+whereis +FILE_PATHS:
+    @realpath -e {{ FILE_PATHS }}

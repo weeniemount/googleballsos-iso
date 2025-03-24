@@ -104,9 +104,8 @@ squash-flatpaks $FLATPAKS_FILE="src/flatpaks.example.txt":
     Path=/app/{{ workdir }}/flatpak
     EOF
     flatpak remote-add --installation="${TARGET_INSTALLATION_NAME}" --if-not-exists flathub "https://dl.flathub.org/repo/flathub.flatpakrepo"
-    grep -v "#.*" /app/{{ FLATPAKS_FILE }} | sort --reverse | xargs '-i{}' -d '\n' sh -c "flatpak remote-info --installation=${TARGET_INSTALLATION_NAME} --system flathub app/{}/$(arch)/stable &>/dev/null && flatpak install --noninteractive -y --installation=${TARGET_INSTALLATION_NAME} {}"
+    grep -v "#.*" /app/{{ FLATPAKS_FILE }} | sort --reverse | xargs '-i{}' -d '\n' sh -c "flatpak remote-info --installation=${TARGET_INSTALLATION_NAME} --system flathub app/{}/$(arch)/stable &>/dev/null && flatpak install --noninteractive -y --installation=${TARGET_INSTALLATION_NAME} {}" || true
     mkfs.erofs --quiet --all-root -zlz4hc,6 -Eall-fragments,fragdedupe=inode -C1048576 /app/{{ workdir }}/flatpak.img /app/{{ workdir }}/flatpak
-    rm -f /etc/flatpak/installations.d/liveiso.conf
     rm -rf /app/{{ workdir }}/flatpak
     LIVESYSEOF
 

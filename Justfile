@@ -36,8 +36,7 @@ initramfs $IMAGE: init-work
     EOF
     install -Dm0755 /app/work/fake-uname /var/tmp/bin/uname
     mkdir -p $(realpath /root)
-    cp /app/src/fstab.sys /etc/fstab.sys
-    PATH=/var/tmp/bin:$PATH dracut --zstd --reproducible --no-hostonly --add "fstab-sys dmsquash-live dmsquash-live-autooverlay" --force /app/{{ workdir }}/initramfs.img
+    PATH=/var/tmp/bin:$PATH dracut --zstd --reproducible --no-hostonly --add "dmsquash-live dmsquash-live-autooverlay" --force /app/{{ workdir }}/initramfs.img |& grep -v -e "Operation not supported"
     INITRAMFSEOF
 
 rootfs $IMAGE: init-work
@@ -62,51 +61,43 @@ rootfs-setuid:
         chmod u+s ${ROOTFS}/\${file}
     done"
 
-squash-container $IMAGE:
+rootfs-include-container $IMAGE:
     #!/usr/bin/env bash
     set -xeuo pipefail
-    ROOTFS="{{ workdir }}/rootfs"
-    ISO_ROOTFS="{{ isoroot }}"
-    # Needs to exist so that we can mount to it
-    sudo mkdir -p "${ROOTFS}/usr/lib/containers/storage"
+    ROOTFS="$(realpath "{{ workdir }}/rootfs")"
+    # We need this in the rootfs specifically so that bootc can know what images are on disk via "podman images"
+    sudo mkdir -p "${ROOTFS}/var/lib/containers/storage"
+    TARGET_CONTAINERS_STORAGE="$(realpath "$ROOTFS")/var/lib/containers/storage"
     # Remove signatures as signed images get super mad when you do this
-    sudo "${PODMAN}" push "${IMAGE}" "containers-storage:[overlay@$(realpath "{{ workdir }}")/containers-storage]$IMAGE" --remove-signatures
-    # We need this in the rootfs specifically so that bootc can know what images are on disk via "${PODMAN}"
-    sudo curl -fSsLo "${ROOTFS}/usr/bin/fuse-overlayfs" "https://github.com/containers/fuse-overlayfs/releases/download/v1.14/fuse-overlayfs-$(arch)"
-    sudo chmod +x "${ROOTFS}/usr/bin/fuse-overlayfs"
-    sudo "${PODMAN}" run --privileged --rm -i -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
-    sh <<"CONTAINEREOF"
-    dnf install -y erofs-utils
-    mkfs.erofs --quiet --all-root -zlz4hc,6 -Eall-fragments,fragdedupe=inode -C1048576 /app/{{ workdir }}/container.img /app/{{ workdir }}/containers-storage
-    CONTAINEREOF
-    sudo umount "{{ workdir }}/containers-storage/overlay"
-    sudo rm -rf "{{ workdir }}/containers-storage"
+    sudo "${PODMAN}" push "${IMAGE}" "containers-storage:[overlay@${TARGET_CONTAINERS_STORAGE}]$IMAGE" --remove-signatures
+    sudo umount "${TARGET_CONTAINERS_STORAGE}/overlay"
 
-squash-flatpaks $FLATPAKS_FILE="src/flatpaks.example.txt":
+rootfs-include-flatpaks $FLATPAKS_FILE="src/flatpaks.example.txt":
     #!/usr/bin/env bash
-    set -x
+    if [ "$FLATPAKS_FILE" == "none" ] ; then
+        exit 0
+    fi
     if [ ! -f "$FLATPAKS_FILE" ] ; then
         echo "Flatpak file seems to not exist, are you sure you gave me the right path? Here it is: $FLATPAKS_FILE"
         exit 1
     fi
-    ROOTFS="{{ workdir }}/rootfs"
+    set -x
+    ROOTFS="$(realpath "{{ workdir }}/rootfs")"
     sudo mkdir -p "${ROOTFS}/var/lib/flatpak"
 
     set -xeuo pipefail
-    sudo "${PODMAN}" run --privileged --rm -i -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
+    sudo "${PODMAN}" run --privileged --rm -i -v "$(realpath "$(dirname "{{ FLATPAKS_FILE }}")"):/flatpak:Z" -v "${ROOTFS}:/rootfs:Z" registry.fedoraproject.org/fedora:41 \
     <<"LIVESYSEOF"
     set -xeuo pipefail
-    dnf install -y flatpak erofs-utils
+    dnf install -y flatpak
     mkdir -p /etc/flatpak/installations.d /app/{{ workdir }}/flatpak
     TARGET_INSTALLATION_NAME="liveiso"
     tee /etc/flatpak/installations.d/liveiso.conf <<EOF
     [Installation "${TARGET_INSTALLATION_NAME}"]
-    Path=/app/{{ workdir }}/flatpak
+    Path=/rootfs/var/lib/flatpak
     EOF
     flatpak remote-add --installation="${TARGET_INSTALLATION_NAME}" --if-not-exists flathub "https://dl.flathub.org/repo/flathub.flatpakrepo"
-    grep -v "#.*" /app/{{ FLATPAKS_FILE }} | sort --reverse | xargs '-i{}' -d '\n' sh -c "flatpak remote-info --installation=${TARGET_INSTALLATION_NAME} --system flathub app/{}/$(arch)/stable &>/dev/null && flatpak install --noninteractive -y --installation=${TARGET_INSTALLATION_NAME} {}" || true
-    mkfs.erofs --quiet --all-root -zlz4hc,6 -Eall-fragments,fragdedupe=inode -C1048576 /app/{{ workdir }}/flatpak.img /app/{{ workdir }}/flatpak
-    rm -rf /app/{{ workdir }}/flatpak
+    grep -v "#.*" /flatpak/$(basename {{ FLATPAKS_FILE }}) | sort --reverse | xargs '-i{}' -d '\n' sh -c "flatpak remote-info --installation=${TARGET_INSTALLATION_NAME} --system flathub app/{}/$(arch)/stable &>/dev/null && flatpak install --noninteractive -y --installation=${TARGET_INSTALLATION_NAME} {}" || true
     LIVESYSEOF
 
 rootfs-install-livesys-scripts: init-work
@@ -126,7 +117,7 @@ rootfs-install-livesys-scripts: init-work
     _session_file="$(find /usr/share/wayland-sessions/ /usr/share/xsessions \
         -maxdepth 1 -type f -name '*.desktop' -printf '%P' -quit)"
     case $_session_file in
-    # TODO (@Zeglius Thu Mar 20 2025): add more sessions.
+    # TODO: (@Zeglius Thu Mar 20 2025): add more sessions.
     plasma.desktop) desktop_env=kde   ;;
     gnome*)         desktop_env=gnome ;;
     xfce.desktop)   desktop_env=xfce  ;;
@@ -152,20 +143,26 @@ hook-post-rootfs: init-work
     sudo "${PODMAN}" run --rm --security-opt label=type:unconfined_t -i -v ".:/app:Z" --rootfs "$(realpath ${ROOTFS})" /usr/bin/bash \
         </dev/stdin
 
-squash: init-work
+squash $fs_type="squashfs": init-work
     #!/usr/bin/env bash
     set -xeuo pipefail
-    ROOTFS="{{ workdir }}/rootfs"
+    ROOTFS="$(realpath "{{ workdir }}/rootfs")"
     # Needs to be squashfs.img due to dracut default name (can be configured on grub.cfg)
-    if [ -e "{{ workdir }}/squashfs.img" ] ; then
-        exit 0
-    fi
-    sudo "${PODMAN}" run --privileged --rm -i -v ".:/app:Z" -v "./${ROOTFS}:/rootfs:Z" registry.fedoraproject.org/fedora:41 \
+    if [ "$fs_type" == "erofs" ] ; then
+    sudo "${PODMAN}" run --privileged --rm -i -v ".:/app:Z" -v "${ROOTFS}:/rootfs:Z" registry.fedoraproject.org/fedora:41 \
         sh <<"SQUASHEOF"
     set -xeuo pipefail
     dnf install -y erofs-utils
-    mkfs.erofs --quiet --all-root -zlz4hc,6 -Eall-fragments,fragdedupe=inode -C1048576 /app/{{ workdir }}/squashfs.img /rootfs
+    mkfs.erofs -d0 --quiet --all-root -zlz4hc,6 -Eall-fragments,fragdedupe=inode -C1048576 /app/{{ workdir }}/squashfs.img /rootfs
     SQUASHEOF
+    elif [ "$fs_type" == "squashfs" ] ; then
+    sudo "${PODMAN}" run --privileged --rm -i -v ".:/app:Z" -v "${ROOTFS}:/rootfs:Z" registry.fedoraproject.org/fedora:41 \
+        sh <<"SQUASHEOF"
+    set -xeuo pipefail
+    dnf install -y squashfs-tools
+    mksquashfs /rootfs /app/{{ workdir }}/squashfs.img -all-root -noappend
+    SQUASHEOF
+    fi 
 
 iso-organize: init-work
     #!/usr/bin/env bash
@@ -175,8 +172,6 @@ iso-organize: init-work
     mkdir -p {{ isoroot }}/boot/grub {{ isoroot }}/LiveOS
     cp {{ workdir }}/rootfs/lib/modules/*/vmlinuz {{ isoroot }}/boot
     sudo cp {{ workdir }}/initramfs.img {{ isoroot }}/boot
-    sudo mv {{ workdir }}/flatpak.img {{ isoroot }}/LiveOS/flatpak.img
-    sudo mv {{ workdir }}/container.img {{ isoroot }}/LiveOS/container.img
     # Needs to be under `/boot/grub` or `grub2`, this depends on what is the grub name during grub compilation
     cp src/grub.cfg {{ isoroot }}/boot/grub
     # Hardcoded on the dmsquash-live source code unless specified otherwise via kargs
@@ -224,7 +219,7 @@ iso:
 
     # https://github.com/FyraLabs/katsu/blob/1e26ecf74164c90bc24299a66f8495eb2aef4845/src/builder.rs#L145
     EFI_BOOT_PART=$(mktemp -d)
-    fallocate $WORKDIR/efiboot.img -l 15M
+    fallocate $WORKDIR/efiboot.img -l 25M
     mkfs.msdos -v -n EFI $WORKDIR/efiboot.img
     mount $WORKDIR/efiboot.img $EFI_BOOT_PART
     mkdir -p $EFI_BOOT_PART/EFI/BOOT
@@ -261,9 +256,10 @@ iso:
         $ISOROOT
     ISOEOF
 
-build image livesys="0" clean="1" flatpaks_file="src/flatpaks.example.txt":
+build image $clean="1" $livesys="0"  $flatpaks_file="src/flatpaks.example.txt" $compression="erofs":
     #!/usr/bin/env bash
     set -xeuo pipefail
+    echo $compression
 
     # We pass hooks contents with file descriptors:
     # - 3: hook_post_rootfs
@@ -276,10 +272,10 @@ build image livesys="0" clean="1" flatpaks_file="src/flatpaks.example.txt":
     just initramfs "{{ image }}"
     just rootfs "{{ image }}"
     just rootfs-setuid
-    just squash-container "{{ image }}"
-    just squash-flatpaks "{{ flatpaks_file }}"
+    just rootfs-include-container "{{ image }}"
+    just rootfs-include-flatpaks "{{ flatpaks_file }}"
 
-    if [[ {{ livesys }} == 1 ]]; then
+    if [[ "{{ livesys }}" == "1" ]]; then
       just rootfs-install-livesys-scripts
     fi
 
@@ -288,15 +284,13 @@ build image livesys="0" clean="1" flatpaks_file="src/flatpaks.example.txt":
       just hook-post-rootfs <<<"hook_post_rootfs"
     fi
 
-    just squash
+    just squash "{{ compression }}"
     just iso-organize
     just iso
 
 clean:
     #!/usr/bin/env bash
     sudo umount work/rootfs/var/lib/containers/storage/overlay/ || true
-    sudo umount work/rootfs/containers/storage/overlay/ || true
-    sudo umount work/iso-root/containers/storage/overlay/ || true
     sudo rm -rf {{ workdir }}
 
 vm ISO_FILE *ARGS:

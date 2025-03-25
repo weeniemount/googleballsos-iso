@@ -162,7 +162,7 @@ squash $fs_type="squashfs": init-work
     dnf install -y squashfs-tools
     mksquashfs /rootfs /app/{{ workdir }}/squashfs.img -all-root -noappend
     SQUASHEOF
-    fi 
+    fi
 
 iso-organize: init-work
     #!/usr/bin/env bash
@@ -268,7 +268,7 @@ build image $clean="1" $livesys="0"  $flatpaks_file="src/flatpaks.example.txt" $
 
     if [ "{{ clean }}" == "1" ] ; then
         just clean
-    fi 
+    fi
     just initramfs "{{ image }}"
     just rootfs "{{ image }}"
     just rootfs-setuid
@@ -280,8 +280,8 @@ build image $clean="1" $livesys="0"  $flatpaks_file="src/flatpaks.example.txt" $
     fi
 
     # Run hooks
-    if [[ -v hook-post-rootfs ]]; then
-      just hook-post-rootfs <<<"hook_post_rootfs"
+    if [[ -v hook_post_rootfs ]]; then
+      just hook-post-rootfs <<<"$hook_post_rootfs"
     fi
 
     just squash "{{ compression }}"

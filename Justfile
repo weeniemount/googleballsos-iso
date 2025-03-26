@@ -286,9 +286,11 @@ iso:
 build $image $clean="1" $livesys="0"  $flatpaks_file="src/flatpaks.example.txt" $compression="squashfs" $container_image="" $polkit="1":
     #!/usr/bin/env bash
     set -xeuo pipefail
-    if [ "${container_image}" == "" ] || [ "${container_image}" == "DEFAULT" ] ; then
-        container_image=$image
-    fi
+
+    # By default, container_image=image.
+    #
+    # container_image is the one going to /var/lib/containers/storage
+    : ${container_image:=$image}
 
     if [ "$clean" == "1" ] ; then
         just clean
@@ -298,6 +300,12 @@ build $image $clean="1" $livesys="0"  $flatpaks_file="src/flatpaks.example.txt" 
     just process-grub-template
     just rootfs-setuid
     just rootfs-include-container "$container_image"
+
+    # Scrap container_image once we dont need it
+    if [[ -n "${CI:-}" ]]; then
+        just delete-image "$container_image"
+    fi
+
     just rootfs-include-flatpaks "$flatpaks_file"
 
     if [[ "${polkit}" == "1" ]]; then
@@ -313,6 +321,12 @@ build $image $clean="1" $livesys="0"  $flatpaks_file="src/flatpaks.example.txt" 
     fi
 
     just squash "$compression"
+
+    # Scrap image once we dont need it
+    if [[ -n "${CI:-}" ]]; then
+        just delete-image "$image"
+    fi
+
     just iso-organize
     just iso
 
@@ -320,6 +334,12 @@ clean:
     #!/usr/bin/env bash
     sudo umount work/rootfs/var/lib/containers/storage/overlay/ || true
     sudo rm -rf {{ workdir }}
+
+[private]
+delete-image image:
+    #!/usr/bin/env bash
+    set -xeuo pipefail
+    sudo "${PODMAN}" rmi --force "{{ image }}" || :
 
 vm ISO_FILE *ARGS:
     #!/usr/bin/env bash

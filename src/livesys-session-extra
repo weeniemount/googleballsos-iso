@@ -1,0 +1,8 @@
+#!/bin/bash
+
+. /etc/os-release
+
+usermod -c "$NAME User" liveuser
+hostnamectl hostname "$ID"
+
+timedatectl set-timezone UTC

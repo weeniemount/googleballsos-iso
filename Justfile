@@ -288,7 +288,7 @@ iso:
         $ISOROOT
     ISOEOF
 
-build $image $clean="1" $livesys="0" $flatpaks_file="src/flatpaks.example.txt" $compression="squashfs" $container_image="" $polkit="1":
+build $image $clean="1" $livesys="1" $flatpaks_file="src/flatpaks.example.txt" $compression="squashfs" $container_image="" $polkit="1":
     #!/usr/bin/env bash
     set -xeuo pipefail
 

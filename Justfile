@@ -27,7 +27,9 @@ initramfs $IMAGE: init-work
     #!/usr/bin/env bash
     set -xeuo pipefail
     {{ _ci_grouping }}
-    sudo "${PODMAN}" pull $IMAGE
+
+    # Pull non-local images
+    sudo "$PODMAN" image exists "$IMAGE" || sudo "$PODMAN" pull "$IMAGE"
     sudo "${PODMAN}" run --privileged --rm -i -v .:/app:Z $IMAGE \
         sh <<'INITRAMFSEOF'
     set -xeuo pipefail

@@ -1,7 +1,9 @@
-export PODMAN := if path_exists("/usr/bin/podman") == "true" { env("PODMAN", "/usr/bin/podman") } else if path_exists("/usr/bin/docker") == "true" { env("PODMAN", "docker") } else { env("PODMAN", "exit 1 ; ") }
+set unstable := true
+PODMAN := which("podman") || require("podman-remote")
 workdir := env("TITANOBOA_WORKDIR", "work")
 isoroot := env("TITANOBOA_ISO_ROOT", "work/iso-root")
-
+rootfs := workdir/"rootfs"
+default_image := "ghcr.io/ublue-os/bluefin:lts"
 ### HOOKS SCRIPT PATHS ###
 # Path to scripts used as hooks in between steps, used in 'hook-*' recipes.
 # Must follow the naming convention HOOK_<recipe name without 'hook_' prefix>
@@ -17,248 +19,329 @@ if [[ -n "${CI:-}" ]]; then
     trap 'echo ::endgroup::' EXIT
 fi
 '''
+[private]
+just := just_executable() + " -f " + source_file()
+
+[private]
+git_root := source_dir()
+
+[private]
+chroot_function := '
+function chroot(){
+    local command="$1"
+    shift
+    local args="$*"
+    ' + PODMAN + ' run --rm -it \
+    --privileged \
+    --security-opt label=type:unconfined_t \
+    $args \
+    --tmpfs /tmp:rw \
+    --tmpfs /run:rw \
+    --volume ' + git_root + ':/app \
+    --rootfs ' + git_root/rootfs + ' \
+    /usr/bin/bash -c "$command"
+}'
+
+[private]
+builder_function := '
+function builder(){
+    local command="$1"
+    shift
+    local args="$*"
+    ' + PODMAN + ' run --rm -it \
+    --privileged \
+    --security-opt label=disable \
+    --volume ' + git_root + ':/app \
+    quay.io/fedora/fedora:latest \
+    /usr/bin/bash -c "$command" $args
+}'
+
+[private]
+compress_dependencies := '
+function compress_dependencies(){
+    local MISSING=()
+    local RPMS=(
+        erofs-utils
+        squashfs-tools
+    )
+    if ! command -v rpm >/dev/null; then
+        echo "1"
+        return
+    fi
+    for rpm in "${RPMS[@]}"; do
+        if ! rpm -q $rpm >/dev/null; then
+            MISSING+=($rpm)
+        fi
+    done
+    echo "${#MISSING[@]}"
+}'
+
+[private]
+iso_dependencies := '
+function iso_dependencies(){
+    local MISSING=()
+    local RPMS=(
+        dosfstools
+        grub2
+        grub2-efi
+        grub2-tools
+        grub2-tools-extra
+        shim
+        xorriso
+    )
+    if [[ "$(uname -m)" == "x86_64" ]]; then
+        RPMS+=(
+            grub2-efi-x64
+            grub2-efi-x64-cdboot
+            grub2-efi-x64-modules
+        )
+    elif [[ "$(uname -m)" == "aarch64" ]]; then
+        RPMS+=(grub2-efi-aa64-modules)
+    fi
+    if ! command -v rpm >/dev/null; then
+        echo "1"
+        return
+    fi
+    for rpm in "${RPMS[@]}"; do
+        if ! rpm -q $rpm >/dev/null; then
+            MISSING+=($rpm)
+        fi
+    done
+    echo "${#MISSING[@]}"
+}'
 #############
 
+# Default
+@default:
+    {{ just }} --list
+
+# Create Directories
 init-work:
+    @echo "{{ style('command') }}Creating Work Directories...{{ NORMAL }}" >&2
     mkdir -p {{ workdir }}
     mkdir -p {{ isoroot }}
+    mkdir -p {{ rootfs }}
 
-initramfs $IMAGE: init-work
+# Extract rootfs
+rootfs image=default_image:
     #!/usr/bin/env bash
-    set -xeuo pipefail
     {{ _ci_grouping }}
-
-    # Pull non-local images
-    sudo "$PODMAN" image exists "$IMAGE" || sudo "$PODMAN" pull "$IMAGE"
-    sudo "${PODMAN}" run --privileged --rm -i -v .:/app:Z $IMAGE \
-        sh <<'INITRAMFSEOF'
     set -xeuo pipefail
-    dnf install -y dracut dracut-live kernel
-    INSTALLED_KERNEL=$(rpm -q kernel-core --queryformat "%{evr}.%{arch}" | tail -n 1)
-    cat >/app/work/fake-uname <<EOF
-    #!/usr/bin/env bash
-
-    if [ "\$1" == "-r" ] ; then
-      echo ${INSTALLED_KERNEL}
-      exit 0
-    fi
-
-    exec /usr/bin/uname \$@
-    EOF
-    install -Dm0755 /app/work/fake-uname /var/tmp/bin/uname
-    mkdir -p $(realpath /root)
-    PATH=/var/tmp/bin:$PATH dracut --zstd --reproducible --no-hostonly --add "dmsquash-live dmsquash-live-autooverlay" --force /app/{{ workdir }}/initramfs.img |& grep -v -e "Operation not supported"
-    INITRAMFSEOF
-
-rootfs $IMAGE: init-work
-    #!/usr/bin/env bash
-    set -xeuo pipefail
-    {{ _ci_grouping }}
-    ROOTFS="{{ workdir }}/rootfs"
-    mkdir -p $ROOTFS
-    ctr="$(sudo "${PODMAN}" create --rm "${IMAGE}" /usr/bin/bash)" && trap "sudo "${PODMAN}" rm $ctr" EXIT
-    sudo "${PODMAN}" export $ctr | tar -xf - -C "${ROOTFS}"
+    # Pull and Extract Filesystem
+    {{ PODMAN }} pull {{ image }} # Pull newer image
+    ctr="$({{ PODMAN }} create --rm {{ image }} /usr/bin/bash)" && trap "{{ PODMAN }} rm $ctr" EXIT
+    {{ PODMAN }} export $ctr | tar -xf - -C {{ rootfs }}
 
     # Make /var/tmp be a tmpfs by symlinking to /tmp,
     # in order to make bootc work at runtime.
-    rm -rf "$ROOTFS"/var/tmp
-    ln -sr "$ROOTFS"/tmp "$ROOTFS"/var/tmp
+    rm -rf {{ rootfs }}/var/tmp
+    ln -sr {{ rootfs }}/tmp {{ rootfs }}/var/tmp
 
+# Generate initramfs with live modules
+initramfs:
+    #!/usr/bin/env bash
+    {{ _ci_grouping }}
+    {{ chroot_function }}
+    set -xeuo pipefail
+    CMD='set -xeuo pipefail
+    dnf install -y dracut dracut-live
+    INSTALLED_KERNEL=$(rpm -q kernel-core --queryformat "%{evr}.%{arch}" | tail -n 1)
+    mkdir -p $(realpath /root)
+    export DRACUT_NO_XATTR=1
+    dracut --zstd --reproducible --no-hostonly --kver "$INSTALLED_KERNEL" --add "dmsquash-live dmsquash-live-autooverlay" --force /app/{{ workdir }}/initramfs.img |& grep -v -e "Operation not supported"'
+    chroot "$CMD"
+
+# Add setuid bit to binaries
 rootfs-setuid:
     #!/usr/bin/env bash
-    set -xeuo pipefail
     {{ _ci_grouping }}
-    ROOTFS="{{ workdir }}/rootfs"
-    sudo sh -c "
-    for file in usr/bin/sudo usr/lib/polkit-1/polkit-agent-helper-1 usr/bin/passwd /usr/bin/pkexec usr/bin/fusermount3 ; do
-        chmod u+s ${ROOTFS}/\${file}
-    done"
-
-# Expand grub templace, according to the image os-release.
-process-grub-template $extra_kargs="NONE":
-    #!/usr/bin/env bash
+    {{ chroot_function }}
     set -xeuo pipefail
-    {{ _ci_grouping }}
-    kargs=()
-    IFS=',' read -r -a kargs <<< "$extra_kargs"
-    if [ "$extra_kargs" == "NONE" ]; then
-        kargs=()
-    fi
+    CMD='set -eoux pipefail
+    for file in /usr/{,s}bin/sudo /usr/lib/polkit-1/polkit-agent-helper-1 /usr/{,s}bin/passwd /usr/{,s}bin/pkexec /usr/{,s}bin/fusermount3 /usr/{,s}bin/newuidmap /usr/{,s}bin/newgidmap; do
+        [[ -f $file ]] && chmod u+s $file || continue
+    done'
+    chroot "$CMD"
 
-    OS_RELEASE="{{ workdir }}/rootfs/usr/lib/os-release"
-    TMPL="src/grub.cfg.tmpl"
-    DEST="src/grub.cfg"
-    PRETTY_NAME="$(source "$OS_RELEASE" >/dev/null && echo "$PRETTY_NAME")"
-    sed \
-        -e "s|@PRETTY_NAME@|${PRETTY_NAME}|g" \
-        -e "s|@EXTRA_KARGS@|${kargs[*]}|g" \
-        "$TMPL" >"$DEST"
-
-rootfs-include-container $IMAGE:
-    #!/usr/bin/env bash
-    set -xeuo pipefail
-    {{ _ci_grouping }}
-    ROOTFS="$(realpath "{{ workdir }}/rootfs")"
-    # We need this in the rootfs specifically so that bootc can know what images are on disk via "podman images"
-    sudo mkdir -p "${ROOTFS}/var/lib/containers/storage"
-    TARGET_CONTAINERS_STORAGE="$(realpath "$ROOTFS")/var/lib/containers/storage"
-    # Remove signatures as signed images get super mad when you do this
-    if sudo podman image exists "${IMAGE}" ; then
-        sudo "${PODMAN}" push "${IMAGE}" "containers-storage:[overlay@${TARGET_CONTAINERS_STORAGE}]$IMAGE" --remove-signatures
-    else
-        sudo "${PODMAN}" pull \
-        --root="$(realpath ${ROOTFS}/var/lib/containers/storage)" \
-        "${IMAGE}"
-    fi
-    sudo umount "${TARGET_CONTAINERS_STORAGE}/overlay" || true
-    # FIXME: add renovate rules for this.
-    # Necessary so `podman images` can run on installers
-    sudo curl -fSsLo "${ROOTFS}/usr/bin/fuse-overlayfs" "https://github.com/containers/fuse-overlayfs/releases/download/v1.14/fuse-overlayfs-$(arch)"
-    sudo chmod +x "${ROOTFS}/usr/bin/fuse-overlayfs"
-
-rootfs-include-flatpaks $FLATPAKS_FILE="src/flatpaks.example.txt":
+# Embed the container
+rootfs-include-container container_image=default_image image=default_image:
     #!/usr/bin/env bash
     {{ _ci_grouping }}
-    if [ "$FLATPAKS_FILE" == "none" ] ; then
-        exit 0
-    fi
-    if [ ! -f "$FLATPAKS_FILE" ] ; then
-        echo "Flatpak file seems to not exist, are you sure you gave me the right path? Here it is: $FLATPAKS_FILE"
-        exit 1
-    fi
-    set -x
-    ROOTFS="$(realpath "{{ workdir }}/rootfs")"
-    sudo mkdir -p "${ROOTFS}/var/lib/flatpak"
+    {{ chroot_function }}
+    set -xeuo pipefail
+    CMD="set -eoux pipefail
+    mkdir -p /var/lib/containers/storage
+    podman pull {{ container_image || default_image }}
+    dnf install -y fuse-overlayfs"
+    chroot "$CMD"
 
-    set -xeuo pipefail
-    sudo "${PODMAN}" run --privileged --rm -i -v "$(realpath "$(dirname "{{ FLATPAKS_FILE }}")"):/flatpak:Z" -v "${ROOTFS}:/rootfs:Z" registry.fedoraproject.org/fedora:41 \
-    <<"LIVESYSEOF"
-    set -xeuo pipefail
+# Install Flatpaks into the live system
+rootfs-include-flatpaks FLATPAKS_FILE="src/flatpaks.example.txt":
+    #!/usr/bin/env bash
+    {{ _ci_grouping }}
+    {{ if FLATPAKS_FILE == '' { 'exit 0' } else if FLATPAKS_FILE =~ '^(?i)\bnone\b$' { 'exit 0' } else if path_exists(FLATPAKS_FILE) == 'false' { error('Flatpak file inaccessible: ' + FLATPAKS_FILE) } else { '' } }}
+    {{ chroot_function }}
+    CMD='set -eoux pipefail
+    mkdir -p /var/lib/flatpak
     dnf install -y flatpak
-    mkdir -p /etc/flatpak/installations.d /app/{{ workdir }}/flatpak
-    TARGET_INSTALLATION_NAME="liveiso"
-    tee /etc/flatpak/installations.d/liveiso.conf <<EOF
-    [Installation "${TARGET_INSTALLATION_NAME}"]
-    Path=/rootfs/var/lib/flatpak
-    EOF
-    flatpak remote-add --installation="${TARGET_INSTALLATION_NAME}" --if-not-exists flathub "https://dl.flathub.org/repo/flathub.flatpakrepo"
-    grep -v "#.*" /flatpak/$(basename {{ FLATPAKS_FILE }}) | sort --reverse | xargs '-i{}' -d '\n' sh -c "flatpak remote-info --installation=${TARGET_INSTALLATION_NAME} --system flathub app/{}/$(arch)/stable &>/dev/null && flatpak install --noninteractive -y --installation=${TARGET_INSTALLATION_NAME} {}" || true
-    LIVESYSEOF
+    dest_repo="/flatpak/repo"
+    flatpak_repo="/var/lib/flatpak/repo"
 
-rootfs-include-polkit: init-work
-    #!/usr/bin/env bash
-    set -xeuo pipefail
-    {{ _ci_grouping }}
-    ROOTFS="{{ workdir }}/rootfs"
-    install -Dpm0644 -t "${ROOTFS}/etc/polkit-1/rules.d/" ./src/polkit-1/rules.d/*.rules
+    # Get Flatpaks
+    flatpak remote-add --if-not-exists flathub "https://dl.flathub.org/repo/flathub.flatpakrepo"
+    grep -v "#.*" /flatpak-list/$(basename {{ FLATPAKS_FILE }}) | sort --reverse | xargs "-i{}" -d "\n" sh -c "flatpak remote-info --system flathub app/{}/$(uname -m)/stable &>/dev/null && flatpak install --noninteractive -y {}" || true'
+    set -eoux pipefail
+    chroot "$CMD" --volume "$(realpath "$(dirname {{ FLATPAKS_FILE }})")":/flatpak-list
 
-rootfs-install-livesys-scripts: init-work
+# Install polkit rules
+rootfs-include-polkit polkit="1":
     #!/usr/bin/env bash
-    set -xeuo pipefail
     {{ _ci_grouping }}
-    ROOTFS="{{ workdir }}/rootfs"
-    sudo "${PODMAN}" run --security-opt label=type:unconfined_t -i --rootfs "$(realpath ${ROOTFS})" /usr/bin/bash \
-    <<"LIVESYSEOF"
+    {{ if polkit == "0" { 'exit 0' } else { '' } }}
+    install -D -m 0644 {{ git_root }}/src/polkit-1/rules.d/*.rules -t {{ rootfs }}/etc/polkit-1/rules.d
+
+# Install Livesys Scripts
+rootfs-install-livesys-scripts livesys="1":
+    #!/usr/bin/env bash
+    {{ _ci_grouping }}
+    {{ if livesys == "0" { 'exit 0' } else { '' } }}
+    {{ chroot_function }}
     set -xeuo pipefail
+    CMD='set -xeuo pipefail
     dnf="$({ which dnf5 || which dnf; } 2>/dev/null)"
     $dnf install -y livesys-scripts
 
     # Determine desktop environment. Must match one of /usr/libexec/livesys/sessions.d/livesys-{desktop_env}
     desktop_env=""
-    # We can tell what desktop environment we are targeting by looking at
-    # the session files. Lets decide by the first file found.
     _session_file="$(find /usr/share/wayland-sessions/ /usr/share/xsessions \
-        -maxdepth 1 -type f -name '*.desktop' -printf '%P' -quit)"
+        -maxdepth 1 -type f -not -name '*gamescope*.desktop' -and -name '*.desktop' -printf '%P' -quit)"
     case $_session_file in
-    # TODO: (@Zeglius Thu Mar 20 2025): add more sessions.
-    plasma.desktop) desktop_env=kde   ;;
-    gnome*)         desktop_env=gnome ;;
-    xfce.desktop)   desktop_env=xfce  ;;
-    *)
-        echo "ERROR[rootfs-install-livesys-scripts]: no matching desktop enviroment found"\
-            " at /usr/share/wayland-sessions/ /usr/share/xsessions";
-        exit 1
-    ;;
+        budgie*) desktop_env=budgie ;;
+        cosmic*) desktop_env=cosmic ;;
+        gnome*)  desktop_env=gnome  ;;
+        plasma*) desktop_env=kde    ;;
+        sway*)   desktop_env=sway   ;;
+        xfce*)   desktop_env=xfce   ;;
+        *) echo "\
+           {{ style('error') }}ERROR[rootfs-install-livesys-scripts]{{ NORMAL }}\
+           : No Livesys Environment Found"; exit 1 ;;
     esac && unset -v _session_file
     sed -i "s/^livesys_session=.*/livesys_session=${desktop_env}/" /etc/sysconfig/livesys
 
     # Enable services
     systemctl enable livesys.service livesys-late.service
-    LIVESYSEOF
-    # Set default time zone to prevent oddities with KDE clock
-    install -D -m 0644 src/livesys-session-extra $ROOTFS/usr/share/factory/var/lib/livesys/livesys-session-extra
-    echo "C /var/lib/livesys/livesys-session-extra 0755 root root - /usr/share/factory/var/lib/livesys/livesys-session-extra" > \
-      $ROOTFS/usr/lib/tmpfiles.d/livesys-session-extra.conf
 
+    # Set default time zone to prevent oddities with KDE clock
+    echo "C /var/lib/livesys/livesys-session-extra 0755 root root - /usr/share/factory/var/lib/livesys/livesys-session-extra" > \
+      /usr/lib/tmpfiles.d/livesys-session-extra.conf'
+    chroot "$CMD"
+    install -D -m 0644 {{ git_root}}/src/livesys-session-extra {{ rootfs }}/usr/share/factory/var/lib/livesys/livesys-session-extra
 
 # Hook used for custom operations done in the rootfs before it is squashed.
 # Meant to be used in a GH action.
 [private]
-hook-post-rootfs $HOOK_post_rootfs=HOOK_post_rootfs: init-work
+hook-post-rootfs hook=HOOK_post_rootfs:
     #!/usr/bin/env bash
-    set -xeuo pipefail
     {{ _ci_grouping }}
-    ROOTFS="{{ workdir }}/rootfs"
-    sudo "${PODMAN}" run --rm --security-opt label=type:unconfined_t -i -v ".:/app:Z" --rootfs "$(realpath ${ROOTFS})" /usr/bin/bash \
-        < <(cat "$HOOK_post_rootfs")
+    {{ if hook == '' { 'exit 0' } else { '' } }}
+    {{ chroot_function }}
+    set -xeuo pipefail
+    chroot "$(cat {{ hook }})"
 
-squash $fs_type="squashfs": init-work
+# Remove the sysroot tree
+rootfs-clean-sysroot:
     #!/usr/bin/env bash
-    set -xeuo pipefail
     {{ _ci_grouping }}
-    ROOTFS="$(realpath "{{ workdir }}/rootfs")"
-    # Needs to be squashfs.img due to dracut default name (can be configured on grub.cfg)
-    if [ "$fs_type" == "erofs" ] ; then
-    sudo "${PODMAN}" run --privileged --rm -i -v ".:/app:Z" -v "${ROOTFS}:/rootfs:Z" registry.fedoraproject.org/fedora:41 \
-        sh <<"SQUASHEOF"
+    {{ chroot_function }}
+    CMD='set -eoux pipefail
+    if [[ -d /app ]]; then
+        rm -rf /sysroot /ostree
+        dnf autoremove -y
+        dnf clean all -y
+    fi'
+    chroot "$CMD"
+
+# Fix SELinux Permissions
+rootfs-selinux-fix image=default_image:
+    #!/usr/bin/env bash
+    {{ _ci_grouping }}
+    CMD='set -eoux pipefail
+    cd /app/{{ rootfs }}
+    setfiles -F -r . /etc/selinux/targeted/contexts/files/file_contexts .
+    chcon --user=system_u --recursive .'
+    set -eoux pipefail
+    {{ PODMAN }} run --rm -it \
+        --volume {{ git_root }}:/app \
+        --workdir "/app" \
+        --security-opt label=disable \
+        --privileged \
+        {{ image }} \
+        /usr/bin/bash -c "$CMD"
+    rmdir {{ rootfs }}/app || true
+
+# Compress rootfs into a compressed image
+squash fs_type="squashfs":
+    #!/usr/bin/env bash
+    {{ _ci_grouping }}
+    {{ if fs_type == "squashfs" { "CMD='mksquashfs $0 $1/squashfs.img -all-root -noappend'" } else if fs_type == "erofs" { "CMD='mkfs.erofs -d0 --quiet --all-root -zlz4hc,6 -Eall-fragments,fragdedupe=inode -C1048576 $1/squashfs.img $0'" } else { error(style('error') + "ERROR[squash]" + NORMAL + ": Invalid Compression") } }}
+    {{ compress_dependencies }}
+    {{ builder_function }}
+    BUILDER="$(compress_dependencies)"
     set -xeuo pipefail
-    dnf install -y erofs-utils
-    mkfs.erofs -d0 --quiet --all-root -zlz4hc,6 -Eall-fragments,fragdedupe=inode -C1048576 /app/{{ workdir }}/squashfs.img /rootfs
-    SQUASHEOF
-    elif [ "$fs_type" == "squashfs" ] ; then
-    sudo "${PODMAN}" run --privileged --rm -i -v ".:/app:Z" -v "${ROOTFS}:/rootfs:Z" registry.fedoraproject.org/fedora:41 \
-        sh <<"SQUASHEOF"
-    set -xeuo pipefail
-    dnf install -y squashfs-tools
-    mksquashfs /rootfs /app/{{ workdir }}/squashfs.img -all-root -noappend
-    SQUASHEOF
+    if ! (( BUILDER )); then
+        bash -c "$CMD" "$(realpath {{ rootfs }})" "$(realpath {{ workdir }})"
+    else
+        {{ if fs_type == "squashfs" { 'CMD="dnf install -y squashfs-tools; $CMD"' } else if fs_type == "erofs" { 'CMD="dnf install -y erofs-utils; $CMD"' } else { '' } }}
+        builder "$CMD" "/app/{{ rootfs }}" "/app/{{ workdir }}"
     fi
 
-iso-organize: init-work
+# Expand grub templace, according to the image os-release.
+process-grub-template $extra_kargs="NONE":
     #!/usr/bin/env bash
-    set -xeuo pipefail
     {{ _ci_grouping }}
-    # Everything here is arbitrary, feel free to modify the paths.
-    # just make sure to edit the grub config & fstab first.
-    mkdir -p {{ isoroot }}/boot/grub {{ isoroot }}/LiveOS
-    cp {{ workdir }}/rootfs/lib/modules/*/vmlinuz {{ isoroot }}/boot
-    sudo cp {{ workdir }}/initramfs.img {{ isoroot }}/boot
-    # Needs to be under `/boot/grub` or `grub2`, this depends on what is the grub name during grub compilation
-    cp src/grub.cfg {{ isoroot }}/boot/grub
-    # Hardcoded on the dmsquash-live source code unless specified otherwise via kargs
-    # https://github.com/dracutdevs/dracut/blob/5d2bda46f4e75e85445ee4d3bd3f68bf966287b9/modules.d/90dmsquash-live/dmsquash-live-root.sh#L24
-    sudo mv {{ workdir }}/squashfs.img {{ isoroot }}/LiveOS/squashfs.img
+    set -xeuo pipefail
+    kargs=()
+    IFS=',' read -r -a kargs <<< "$extra_kargs"
+    if [[ "$extra_kargs" == "NONE" ]]; then
+        kargs=()
+    fi
 
+    OS_RELEASE="{{ workdir }}/rootfs/usr/lib/os-release"
+    TMPL="src/grub.cfg.tmpl"
+    DEST="{{ isoroot }}/boot/grub/grub.cfg"
+    # TODO figure out a better mechanism
+    PRETTY_NAME="$(source "$OS_RELEASE" >/dev/null && echo "${PRETTY_NAME/ (*)}")"
+    sed \
+        -e "s|@PRETTY_NAME@|${PRETTY_NAME}|g" \
+        -e "s|@EXTRA_KARGS@|${kargs[*]}|g" \
+        "$TMPL" >"$DEST"
+
+# Prep the environment for the ISO
+iso-organize extra_kargs="NONE": && (process-grub-template extra_kargs)
+    #!/usr/bin/env bash
+    {{ _ci_grouping }}
+    set -xeuo pipefail
+    mkdir -p {{ isoroot }}/boot/grub {{ isoroot }}/LiveOS
+    cp {{ rootfs }}/lib/modules/*/vmlinuz {{ isoroot }}/boot
+    cp {{ workdir }}/initramfs.img {{ isoroot }}/boot
+    # Hardcoded on the dmsquash-live source code unless specified otherwise via kargs
+    # https://github.com/dracut-ng/dracut-ng/blob/0ffc61e536d1193cb837917d6a283dd6094cb06d/modules.d/90dmsquash-live/dmsquash-live-root.sh#L23
+    cp {{ workdir }}/squashfs.img {{ isoroot }}/LiveOS/squashfs.img
+
+# Build the ISO from the compressed image
 iso:
     #!/usr/bin/env bash
-    set -xeuo pipefail
     {{ _ci_grouping }}
-    sudo "${PODMAN}" run --privileged --rm -i -v ".:/app:Z" registry.fedoraproject.org/fedora:41 \
-        sh <<"ISOEOF"
-    set -xeuo pipefail
-    ISOROOT="$(realpath /app/{{ isoroot }})"
-    WORKDIR="$(realpath /app/{{ workdir }})"
-    dnf install -y grub2 grub2-efi grub2-tools grub2-tools-extra xorriso shim dosfstools
-    if [ "$(arch)" == "x86_64" ] ; then
-        dnf install -y grub2-efi-x64-modules grub2-efi-x64-cdboot grub2-efi-x64
-    elif [ "$(arch)" == "aarch64" ] ; then
-        dnf install -y grub2-efi-aa64-modules
-    fi
+    {{ iso_dependencies }}
+    BUILDER="$(iso_dependencies)"
+    CMD='set -xeuo pipefail
+    ISOROOT="$0"
+    WORKDIR="$1"
 
     mkdir -p $ISOROOT/EFI/BOOT
     # ARCH_SHORT needs to be uppercase
-    ARCH_SHORT="$(arch | sed 's/x86_64/x64/g' | sed 's/aarch64/aa64/g')"
-    ARCH_32="$(arch | sed 's/x86_64/ia32/g' | sed 's/aarch64/arm/g')"
+    ARCH_SHORT="$(uname -m | sed 's/x86_64/x64/g' | sed 's/aarch64/aa64/g')"
+    ARCH_32="$(uname -m | sed 's/x86_64/ia32/g' | sed 's/aarch64/arm/g')"
     cp -avf /boot/efi/EFI/fedora/. $ISOROOT/EFI/BOOT
     cp -avf $ISOROOT/boot/grub/grub.cfg $ISOROOT/EFI/BOOT/BOOT.conf
     cp -avf $ISOROOT/boot/grub/grub.cfg $ISOROOT/EFI/BOOT/grub.cfg
@@ -266,9 +349,9 @@ iso:
     cp -avf $ISOROOT/EFI/BOOT/shim${ARCH_SHORT}.efi "$ISOROOT/EFI/BOOT/BOOT${ARCH_SHORT^^}.efi"
     cp -avf $ISOROOT/EFI/BOOT/shim.efi "$ISOROOT/EFI/BOOT/BOOT${ARCH_32}.efi"
 
-    ARCH_GRUB="$(arch | sed 's/x86_64/i386-pc/g' | sed 's/aarch64/arm64-efi/g')"
-    ARCH_OUT="$(arch | sed 's/x86_64/i386-pc-eltorito/g' | sed 's/aarch64/arm64-efi/g')"
-    ARCH_MODULES="$(arch | sed 's/x86_64/biosdisk/g' | sed 's/aarch64/efi_gop/g')"
+    ARCH_GRUB="$(uname -m | sed 's/x86_64/i386-pc/g' | sed 's/aarch64/arm64-efi/g')"
+    ARCH_OUT="$(uname -m | sed 's/x86_64/i386-pc-eltorito/g' | sed 's/aarch64/arm64-efi/g')"
+    ARCH_MODULES="$(uname -m | sed 's/x86_64/biosdisk/g' | sed 's/aarch64/efi_gop/g')"
 
     grub2-mkimage -O $ARCH_OUT -d /usr/lib/grub/$ARCH_GRUB -o $ISOROOT/boot/eltorito.img -p /boot/grub iso9660 $ARCH_MODULES
     grub2-mkrescue -o $ISOROOT/../efiboot.img
@@ -289,7 +372,7 @@ iso:
     umount $EFI_BOOT_PART
 
     ARCH_SPECIFIC=()
-    if [ "$(arch)" == "x86_64" ] ; then
+    if [ "$(uname -m)" == "x86_64" ] ; then
         ARCH_SPECIFIC=("--grub2-mbr" "/usr/lib/grub/i386-pc/boot_hybrid.img")
     fi
 
@@ -315,70 +398,73 @@ iso:
         -iso-level 3 \
         -o /app/output.iso \
         "${ARCH_SPECIFIC[@]}" \
-        $ISOROOT
-    ISOEOF
-
-build $image $clean="1" $livesys="1" $flatpaks_file="src/flatpaks.example.txt" $compression="squashfs" $extra_kargs="NONE" $container_image="" $polkit="1":
-    #!/usr/bin/env bash
-    set -xeuo pipefail
-
-    # By default, container_image=image.
-    #
-    # container_image is the one going to /var/lib/containers/storage
-    : ${container_image:=$image}
-
-    if [ "$clean" == "1" ] ; then
-        just clean
-    fi
-    just initramfs "$image"
-    just rootfs "$image"
-    just process-grub-template "$extra_kargs"
-    just rootfs-setuid
-    just rootfs-include-container "$container_image"
-
-    # Scrap container_image once we dont need it
-    if [[ -n "${CI:-}" ]]; then
-        just delete-image "$container_image"
+        $ISOROOT'
+    if ! (( BUILDER )); then
+        set -xeuo pipefail
+        bash -c "$CMD" "$(realpath {{ isoroot }})" "$(realpath {{ workdir }})"
+    else
+        {{ if `systemd-detect-virt -c || true` != 'none' { "echo '" + style('error') + "ERROR[iso]" + NORMAL + ": Cannot run in nested containers'; exit 1" } else { '' } }}
+        {{ builder_function }}
+        INSTALLCMD='dnf install -y grub2 grub2-efi grub2-tools grub2-tools-extra xorriso shim dosfstools
+        if [ "$(uname -m)" == "x86_64" ] ; then
+            dnf install -y grub2-efi-x64-modules grub2-efi-x64-cdboot grub2-efi-x64
+        elif [ "$(uname -m)" == "aarch64" ] ; then
+            dnf install -y grub2-efi-aa64-modules
+        fi'
+        CMD="${INSTALLCMD};${CMD}"
+        set -xeuo pipefail
+        builder "$CMD" "/app/{{ isoroot }}" "/app/{{ workdir }}"
     fi
 
-    just rootfs-include-flatpaks "$flatpaks_file"
+# TODO update this recipe parameters. Make it actually usable
+[no-exit-message]
+[doc('Build a live-iso')]
+@build image=default_image livesys="1" flatpaks_file="src/flatpaks.example.txt" compression="squashfs" extra_kargs="NONE" container_image=image polkit="1": \
+    checkroot \
+    clean \
+    init-work \
+    (rootfs image) \
+    initramfs \
+    rootfs-setuid \
+    (rootfs-include-flatpaks canonicalize(flatpaks_file)) \
+    (rootfs-include-polkit polkit) \
+    (rootfs-install-livesys-scripts livesys) \
+    (rootfs-include-container container_image image) \
+    (hook-post-rootfs canonicalize(HOOK_post_rootfs)) \
+    rootfs-clean-sysroot \
+    (rootfs-selinux-fix image) \
+    (ci-delete-image image) \
+    (squash compression) \
+    (iso-organize extra_kargs) \
+    iso
+    mv ./output.iso {{ justfile_dir() }} &>/dev/null
 
-    if [[ "${polkit}" == "1" ]]; then
-      just rootfs-include-polkit
-    fi
-    if [[ "${livesys}" == "1" ]]; then
-      just rootfs-install-livesys-scripts
-    fi
+[no-exit-message]
+@checkroot:
+    if [ `id -u` -gt 0 ]; then echo '{{ style("error") }}ERROR[build]{{ NORMAL }}: Must be root to build ISO' >&2 && exit 1; fi
 
-    # Run hooks
-    if [[ -n '{{ HOOK_post_rootfs }}' ]]; then
-      just hook-post-rootfs '{{ HOOK_post_rootfs }}'
-    fi
-
-    just squash "$compression"
-
-    # Scrap image once we dont need it
-    if [[ -n "${CI:-}" ]]; then
-        just delete-image "$image"
-    fi
-
-    just iso-organize
-    just iso
-
-clean:
-    #!/usr/bin/env bash
-    sudo umount work/rootfs/var/lib/containers/storage/overlay/ || true
-    sudo rm -rf {{ workdir }}
+@clean:
+    echo "{{ style('command') }}cleaning {{ absolute_path(workdir) }}...{{ NORMAL }}" >&2
+    rm -rf {{ absolute_path(workdir) }}
 
 [private]
 delete-image image:
     #!/usr/bin/env bash
     set -xeuo pipefail
-    sudo "${PODMAN}" rmi --force "{{ image }}" || :
+    {{ PODMAN }} rmi --force "{{ image }}" || :
 
+[private]
+ci-delete-image image:
+    #!/usr/bin/env bash
+    set -xeuo pipefail
+    if [[ -n "${CI:-}" ]]; then
+        {{ PODMAN }} rmi --force {{ image }} || :
+    fi
+
+# Run VM with qemu
 vm ISO_FILE *ARGS:
     #!/usr/bin/env bash
-    qemu="qemu-system-$(arch)"
+    qemu="qemu-system-$(uname -m)"
     if [[ ! $(type -P "$qemu") ]]; then
       qemu="flatpak run --command=$qemu org.virt_manager.virt-manager"
     fi
@@ -394,6 +480,7 @@ vm ISO_FILE *ARGS:
         -boot d \
         -cdrom {{ ISO_FILE }} {{ ARGS }}
 
+# Run VM with a container and web vnc
 container-run-vm ISO_FILE:
     #!/usr/bin/env bash
     set -eoux pipefail
@@ -405,24 +492,26 @@ container-run-vm ISO_FILE:
     echo "Using Port: ${port}"
     echo "Connect to http://localhost:${port}"
 
+    # Ram Size
+    mem_free=$(awk '/MemAvailable/ { printf "%.0f\n", $2/1024/1024 - 1 }' /proc/meminfo)
+    ram_size=$(( mem_free > 64 ? mem_free / 2 : (mem_free > 8 ? 8 : (mem_free < 3 ? 3 : mem_free)) ))
+
     # Set up the arguments for running the VM
     run_args=()
     run_args+=(--rm --privileged)
     run_args+=(--pull=newer)
     run_args+=(--publish "127.0.0.1:${port}:8006")
     run_args+=(--env "CPU_CORES=$(( $(nproc) / 2 > 0 ? $(nproc) / 2 : 1 ))")
-    mem_free=$(awk '/MemAvailable/ { printf "%.0f\n", $2/1024/1024 - 1 }' /proc/meminfo)
-    ram_size=$(( mem_free > 8 ? 8 : (mem_free < 3 ? 3 : mem_free) ))
     run_args+=(--env "RAM_SIZE=${ram_size}G")
     run_args+=(--env "DISK_SIZE=64G")
     run_args+=(--env "TPM=Y")
     run_args+=(--env "GPU=Y")
     run_args+=(--device=/dev/kvm)
-    run_args+=(--volume "{{ ISO_FILE }}":"/boot.iso")
-    run_args+=(docker.io/qemux/qemu-docker)
+    run_args+=(--volume "{{ canonicalize(ISO_FILE) }}":"/boot.iso")
+    run_args+=(ghcr.io/qemus/qemu)
 
     # Run the VM and open the browser to connect
-    "${PODMAN}" run "${run_args[@]}" &
+    {{ PODMAN }} run "${run_args[@]}" &
     xdg-open http://localhost:${port}
 
 # Print the absolute of the files relative to the project dir.

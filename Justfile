@@ -9,7 +9,7 @@ default_image := "ghcr.io/ublue-os/bluefin:lts"
 # Must follow the naming convention HOOK_<recipe name without 'hook_' prefix>
 
 # Hook used for custom operations done in the rootfs before it is squashed.
-HOOK_post_rootfs := ''
+HOOK_post_rootfs := env("HOOK_post_rootfs", "")
 ##########################
 
 ### UTILS ###
@@ -57,27 +57,24 @@ function builder(){
 }'
 
 [private]
-compress_dependencies := '
+compress_dependencies := '''
 function compress_dependencies(){
     local MISSING=()
-    local RPMS=(
-        erofs-utils
-        squashfs-tools
+    local DEPS=(
+        mksquashfs
+        mkfs.erofs
     )
-    if ! command -v rpm >/dev/null; then
-        echo "1"
-        return
-    fi
-    for rpm in "${RPMS[@]}"; do
-        if ! rpm -q $rpm >/dev/null; then
-            MISSING+=($rpm)
+    for dep in "${DEPS[@]}"; do
+        if ! command -v $dep >/dev/null; then
+            MISSING+=($dep)
         fi
     done
     echo "${#MISSING[@]}"
-}'
+}
+'''
 
 [private]
-iso_dependencies := '
+iso_dependencies := '''
 function iso_dependencies(){
     local MISSING=()
     local RPMS=(
@@ -108,7 +105,8 @@ function iso_dependencies(){
         fi
     done
     echo "${#MISSING[@]}"
-}'
+}
+'''
 #############
 
 # Default
@@ -130,7 +128,7 @@ rootfs image=default_image:
     # Pull and Extract Filesystem
     {{ PODMAN }} pull {{ image }} # Pull newer image
     ctr="$({{ PODMAN }} create --rm {{ image }} /usr/bin/bash)" && trap "{{ PODMAN }} rm $ctr" EXIT
-    {{ PODMAN }} export $ctr | tar -xf - -C {{ rootfs }}
+    {{ PODMAN }} export $ctr | tar --xattrs-include='*' -p -xf - -C {{ rootfs }}
 
     # Make /var/tmp be a tmpfs by symlinking to /tmp,
     # in order to make bootc work at runtime.
@@ -151,18 +149,6 @@ initramfs:
     dracut --zstd --reproducible --no-hostonly --kver "$INSTALLED_KERNEL" --add "dmsquash-live dmsquash-live-autooverlay" --force /app/{{ workdir }}/initramfs.img |& grep -v -e "Operation not supported"'
     chroot "$CMD"
 
-# Add setuid bit to binaries
-rootfs-setuid:
-    #!/usr/bin/env bash
-    {{ _ci_grouping }}
-    {{ chroot_function }}
-    set -xeuo pipefail
-    CMD='set -eoux pipefail
-    for file in /usr/{,s}bin/sudo /usr/lib/polkit-1/polkit-agent-helper-1 /usr/{,s}bin/passwd /usr/{,s}bin/pkexec /usr/{,s}bin/fusermount3 /usr/{,s}bin/newuidmap /usr/{,s}bin/newgidmap; do
-        [[ -f $file ]] && chmod u+s $file || continue
-    done'
-    chroot "$CMD"
-
 # Embed the container
 rootfs-include-container container_image=default_image image=default_image:
     #!/usr/bin/env bash
@@ -171,7 +157,7 @@ rootfs-include-container container_image=default_image image=default_image:
     set -xeuo pipefail
     CMD="set -eoux pipefail
     mkdir -p /var/lib/containers/storage
-    podman pull {{ container_image || default_image }}
+    podman pull {{ container_image || image }}
     dnf install -y fuse-overlayfs"
     chroot "$CMD"
 
@@ -179,7 +165,7 @@ rootfs-include-container container_image=default_image image=default_image:
 rootfs-include-flatpaks FLATPAKS_FILE="src/flatpaks.example.txt":
     #!/usr/bin/env bash
     {{ _ci_grouping }}
-    {{ if FLATPAKS_FILE == '' { 'exit 0' } else if FLATPAKS_FILE =~ '^(?i)\bnone\b$' { 'exit 0' } else if path_exists(FLATPAKS_FILE) == 'false' { error('Flatpak file inaccessible: ' + FLATPAKS_FILE) } else { '' } }}
+    {{ if FLATPAKS_FILE =~ '(^$|^(?i)\bnone\b$)' { 'exit 0' } else if path_exists(FLATPAKS_FILE) == 'false' { error('Flatpak file inaccessible: ' + FLATPAKS_FILE) } else { '' } }}
     {{ chroot_function }}
     CMD='set -eoux pipefail
     mkdir -p /var/lib/flatpak
@@ -421,16 +407,16 @@ iso:
 [doc('Build a live-iso')]
 @build image=default_image livesys="1" flatpaks_file="src/flatpaks.example.txt" compression="squashfs" extra_kargs="NONE" container_image=image polkit="1": \
     checkroot \
+    (show-config image livesys flatpaks_file compression extra_kargs container_image polkit) \
     clean \
     init-work \
     (rootfs image) \
     initramfs \
-    rootfs-setuid \
-    (rootfs-include-flatpaks canonicalize(flatpaks_file)) \
+    (rootfs-include-flatpaks flatpaks_file) \
     (rootfs-include-polkit polkit) \
     (rootfs-install-livesys-scripts livesys) \
     (rootfs-include-container container_image image) \
-    (hook-post-rootfs canonicalize(HOOK_post_rootfs)) \
+    (hook-post-rootfs HOOK_post_rootfs) \
     rootfs-clean-sysroot \
     (rootfs-selinux-fix image) \
     (ci-delete-image image) \
@@ -438,6 +424,26 @@ iso:
     (iso-organize extra_kargs) \
     iso
     mv ./output.iso {{ justfile_dir() }} &>/dev/null
+
+
+@show-config image livesys flatpaks_file compression extra_kargs container_image polkit:
+    echo "Using the following configuration:"
+    echo "################################################################################"
+    echo "PODMAN           := {{ PODMAN }}"
+    echo "workdir          := {{ workdir }}"
+    echo "isoroot          := {{ isoroot }}"
+    echo "rootfs           := {{ rootfs }}"
+    echo "HOOK_post_rootfs := {{ if HOOK_post_rootfs =~ '(^$|^(?i)\bnone\b$)' { '' } else { canonicalize(HOOK_post_rootfs) } }}"
+    echo "image            := {{ image }}"
+    echo "livesys          := {{ livesys }}"
+    echo "flatpaks_file    := {{ if flatpaks_file =~ '(^$|^(?i)\bnone\b$)' { '' } else { canonicalize(flatpaks_file) } }}"
+    echo "compression      := {{ compression }}"
+    echo "extra_kargs      := {{ extra_kargs }}"
+    echo "container_image  := {{ container_image || image }}"
+    echo "polkit           := {{ polkit }}"
+    echo "################################################################################"
+    sleep 1
+
 
 [no-exit-message]
 @checkroot:

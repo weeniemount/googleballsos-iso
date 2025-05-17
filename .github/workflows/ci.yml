@@ -55,7 +55,7 @@ jobs:
         id: name
         shell: bash
         env:
-          IMAGE_NAME: ${{ matrix.container-image }}
+          IMAGE_NAME: ${{ matrix.container-image || matrix.image }}
         run: |
           set -eoux pipefail
           IMAGE_NAME="${IMAGE_NAME##*/}"

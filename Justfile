@@ -225,7 +225,6 @@ rootfs-install-livesys-scripts livesys="1":
 
 # Hook used for custom operations done in the rootfs before it is squashed.
 # Meant to be used in a GH action.
-[private]
 hook-post-rootfs hook=HOOK_post_rootfs:
     #!/usr/bin/env bash
     {{ _ci_grouping }}
@@ -512,6 +511,7 @@ container-run-vm ISO_FILE:
     run_args+=(--env "DISK_SIZE=64G")
     run_args+=(--env "TPM=Y")
     run_args+=(--env "GPU=Y")
+    run_args+=(--env "BOOT_MODE=windows_secure")
     run_args+=(--device=/dev/kvm)
     run_args+=(--volume "{{ canonicalize(ISO_FILE) }}":"/boot.iso")
     run_args+=(ghcr.io/qemus/qemu)

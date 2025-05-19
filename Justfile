@@ -314,12 +314,12 @@ iso-organize extra_kargs: && (process-grub-template extra_kargs)
     # Hardcoded on the dmsquash-live source code unless specified otherwise via kargs
     # https://github.com/dracut-ng/dracut-ng/blob/0ffc61e536d1193cb837917d6a283dd6094cb06d/modules.d/90dmsquash-live/dmsquash-live-root.sh#L23
     cp {{ workdir }}/squashfs.img {{ isoroot }}/LiveOS/squashfs.img
-    {{ if env('CI', '') != '' { "echo '" + style('warning') + "In CI - Deleting: "  + rootfs + "...' " + NORMAL +"; rm -rf " + rootfs } else { '' } }}
 
 # Build the ISO from the compressed image
 iso:
     #!/usr/bin/env bash
     {{ _ci_grouping }}
+    {{ if env('CI', '') != '' { "echo '" + style('warning') + "In CI - Deleting: "  + rootfs + "...' " + NORMAL +"; rm -rf " + rootfs } else { '' } }}
     {{ iso_dependencies }}
     BUILDER="$(iso_dependencies)"
     CMD='set -xeuo pipefail

@@ -297,6 +297,7 @@ process-grub-template $extra_kargs="NONE":
     OS_RELEASE="{{ rootfs }}/usr/lib/os-release"
     TMPL="src/grub.cfg.tmpl"
     DEST="{{ isoroot }}/boot/grub/grub.cfg"
+    mkdir -p "$(dirname $DEST)"
     # TODO figure out a better mechanism
     PRETTY_NAME="$(source "$OS_RELEASE" >/dev/null && echo "${PRETTY_NAME/ (*)}")"
     sed \

@@ -140,7 +140,7 @@ initramfs:
     #!/usr/bin/env bash
     {{ _ci_grouping }}
     {{ chroot_function }}
-    set -xeuo pipefail
+    set -euo pipefail
     CMD='set -xeuo pipefail
     dnf install -y dracut dracut-live
     INSTALLED_KERNEL=$(rpm -q kernel-core --queryformat "%{evr}.%{arch}" | tail -n 1)
@@ -154,8 +154,8 @@ rootfs-include-container container_image=default_image image=default_image:
     #!/usr/bin/env bash
     {{ _ci_grouping }}
     {{ chroot_function }}
-    set -xeuo pipefail
-    CMD="set -eoux pipefail
+    set -euo pipefail
+    CMD="set -xeuo pipefail
     mkdir -p /var/lib/containers/storage
     podman pull {{ container_image || image }}
     dnf install -y fuse-overlayfs"
@@ -167,7 +167,7 @@ rootfs-include-flatpaks FLATPAKS_FILE="src/flatpaks.example.txt":
     {{ _ci_grouping }}
     {{ if FLATPAKS_FILE =~ '(^$|^(?i)\bnone\b$)' { 'exit 0' } else if path_exists(FLATPAKS_FILE) == 'false' { error('Flatpak file inaccessible: ' + FLATPAKS_FILE) } else { '' } }}
     {{ chroot_function }}
-    CMD='set -eoux pipefail
+    CMD='set -xeuo pipefail
     mkdir -p /var/lib/flatpak
     dnf install -y flatpak
     dest_repo="/flatpak/repo"
@@ -176,7 +176,7 @@ rootfs-include-flatpaks FLATPAKS_FILE="src/flatpaks.example.txt":
     # Get Flatpaks
     flatpak remote-add --if-not-exists flathub "https://dl.flathub.org/repo/flathub.flatpakrepo"
     grep -v "#.*" /flatpak-list/$(basename {{ FLATPAKS_FILE }}) | sort --reverse | xargs "-i{}" -d "\n" sh -c "flatpak remote-info --system flathub app/{}/$(uname -m)/stable &>/dev/null && flatpak install --noninteractive -y {}" || true'
-    set -eoux pipefail
+    set -euo pipefail
     chroot "$CMD" --volume "$(realpath "$(dirname {{ FLATPAKS_FILE }})")":/flatpak-list
 
 # Install polkit rules
@@ -184,6 +184,7 @@ rootfs-include-polkit polkit="1":
     #!/usr/bin/env bash
     {{ _ci_grouping }}
     {{ if polkit == "0" { 'exit 0' } else { '' } }}
+    set -euo pipefail
     install -D -m 0644 {{ git_root }}/src/polkit-1/rules.d/*.rules -t {{ rootfs }}/etc/polkit-1/rules.d
 
 # Install Livesys Scripts
@@ -192,7 +193,7 @@ rootfs-install-livesys-scripts livesys="1":
     {{ _ci_grouping }}
     {{ if livesys == "0" { 'exit 0' } else { '' } }}
     {{ chroot_function }}
-    set -xeuo pipefail
+    set -euo pipefail
     CMD='set -xeuo pipefail
     dnf="$({ which dnf5 || which dnf; } 2>/dev/null)"
     $dnf install -y livesys-scripts
@@ -230,7 +231,7 @@ hook-post-rootfs hook=HOOK_post_rootfs:
     {{ _ci_grouping }}
     {{ if hook == '' { 'exit 0' } else { '' } }}
     {{ chroot_function }}
-    set -xeuo pipefail
+    set -euo pipefail
     chroot "$(cat {{ hook }})"
 
 # Remove the sysroot tree
@@ -238,7 +239,8 @@ rootfs-clean-sysroot:
     #!/usr/bin/env bash
     {{ _ci_grouping }}
     {{ chroot_function }}
-    CMD='set -eoux pipefail
+    set -euo pipefail
+    CMD='set -xeuo pipefail
     if [[ -d /app ]]; then
         rm -rf /sysroot /ostree
         dnf autoremove -y
@@ -250,11 +252,11 @@ rootfs-clean-sysroot:
 rootfs-selinux-fix image=default_image:
     #!/usr/bin/env bash
     {{ _ci_grouping }}
-    CMD='set -eoux pipefail
+    set -euo pipefail
+    CMD='set -xeuo pipefail
     cd /app/{{ rootfs }}
     setfiles -F -r . /etc/selinux/targeted/contexts/files/file_contexts .
     chcon --user=system_u --recursive .'
-    set -eoux pipefail
     {{ PODMAN }} run --rm -it \
         --volume {{ git_root }}:/app \
         --workdir "/app" \
@@ -271,14 +273,15 @@ squash fs_type="squashfs":
     {{ if fs_type == "squashfs" { "CMD='mksquashfs $0 $1/squashfs.img -all-root -noappend'" } else if fs_type == "erofs" { "CMD='mkfs.erofs -d0 --quiet --all-root -zlz4hc,6 -Eall-fragments,fragdedupe=inode -C1048576 $1/squashfs.img $0'" } else { error(style('error') + "ERROR[squash]" + NORMAL + ": Invalid Compression") } }}
     {{ compress_dependencies }}
     {{ builder_function }}
+    set -euo pipefail
     BUILDER="$(compress_dependencies)"
-    set -xeuo pipefail
     if ! (( BUILDER )); then
         bash -c "$CMD" "$(realpath {{ rootfs }})" "$(realpath {{ workdir }})"
     else
         {{ if fs_type == "squashfs" { 'CMD="dnf install -y squashfs-tools; $CMD"' } else if fs_type == "erofs" { 'CMD="dnf install -y erofs-utils; $CMD"' } else { '' } }}
         builder "$CMD" "/app/{{ rootfs }}" "/app/{{ workdir }}"
     fi
+    {{ if env('CI', '') != '' { "echo '" + style('warning') + "In CI - Deleting: "  + rootfs + "...' " + NORMAL +"; rm -rf " + rootfs } else { '' } }}
 
 # Expand grub templace, according to the image os-release.
 process-grub-template $extra_kargs="NONE":
@@ -291,7 +294,7 @@ process-grub-template $extra_kargs="NONE":
         kargs=()
     fi
 
-    OS_RELEASE="{{ workdir }}/rootfs/usr/lib/os-release"
+    OS_RELEASE="{{ rootfs }}/usr/lib/os-release"
     TMPL="src/grub.cfg.tmpl"
     DEST="{{ isoroot }}/boot/grub/grub.cfg"
     # TODO figure out a better mechanism
@@ -302,7 +305,7 @@ process-grub-template $extra_kargs="NONE":
         "$TMPL" >"$DEST"
 
 # Prep the environment for the ISO
-iso-organize extra_kargs="NONE": && (process-grub-template extra_kargs)
+iso-organize:
     #!/usr/bin/env bash
     {{ _ci_grouping }}
     set -xeuo pipefail
@@ -384,8 +387,8 @@ iso:
         -o /app/output.iso \
         "${ARCH_SPECIFIC[@]}" \
         $ISOROOT'
+    set -euo pipefail
     if ! (( BUILDER )); then
-        set -xeuo pipefail
         bash -c "$CMD" "$(realpath {{ isoroot }})" "$(realpath {{ workdir }})"
     else
         {{ if `systemd-detect-virt -c || true` != 'none' { "echo '" + style('error') + "ERROR[iso]" + NORMAL + ": Cannot run in nested containers'; exit 1" } else { '' } }}
@@ -397,7 +400,6 @@ iso:
             dnf install -y grub2-efi-aa64-modules
         fi'
         CMD="${INSTALLCMD};${CMD}"
-        set -xeuo pipefail
         builder "$CMD" "/app/{{ isoroot }}" "/app/{{ workdir }}"
     fi
 
@@ -419,8 +421,9 @@ iso:
     rootfs-clean-sysroot \
     (rootfs-selinux-fix image) \
     (ci-delete-image image) \
+    (process-grub-template extra_kargs) \
     (squash compression) \
-    (iso-organize extra_kargs) \
+    (iso-organize) \
     iso
     mv ./output.iso {{ justfile_dir() }} &>/dev/null
 
@@ -488,7 +491,7 @@ vm ISO_FILE *ARGS:
 # Run VM with a container and web vnc
 container-run-vm ISO_FILE:
     #!/usr/bin/env bash
-    set -eoux pipefail
+    set -xeuo pipefail
     # Determine an available port to use
     port=8006
     while grep -q :${port} <<< $(ss -tunalp); do

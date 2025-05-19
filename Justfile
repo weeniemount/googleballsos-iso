@@ -281,7 +281,6 @@ squash fs_type="squashfs":
         {{ if fs_type == "squashfs" { 'CMD="dnf install -y squashfs-tools; $CMD"' } else if fs_type == "erofs" { 'CMD="dnf install -y erofs-utils; $CMD"' } else { '' } }}
         builder "$CMD" "/app/{{ rootfs }}" "/app/{{ workdir }}"
     fi
-    {{ if env('CI', '') != '' { "echo '" + style('warning') + "In CI - Deleting: "  + rootfs + "...' " + NORMAL +"; rm -rf " + rootfs } else { '' } }}
 
 # Expand grub templace, according to the image os-release.
 process-grub-template $extra_kargs="NONE":
@@ -297,7 +296,6 @@ process-grub-template $extra_kargs="NONE":
     OS_RELEASE="{{ rootfs }}/usr/lib/os-release"
     TMPL="src/grub.cfg.tmpl"
     DEST="{{ isoroot }}/boot/grub/grub.cfg"
-    mkdir -p "$(dirname $DEST)"
     # TODO figure out a better mechanism
     PRETTY_NAME="$(source "$OS_RELEASE" >/dev/null && echo "${PRETTY_NAME/ (*)}")"
     sed \
@@ -306,7 +304,7 @@ process-grub-template $extra_kargs="NONE":
         "$TMPL" >"$DEST"
 
 # Prep the environment for the ISO
-iso-organize:
+iso-organize extra_kargs: (process-grub-template extra_kargs)
     #!/usr/bin/env bash
     {{ _ci_grouping }}
     set -xeuo pipefail
@@ -316,6 +314,7 @@ iso-organize:
     # Hardcoded on the dmsquash-live source code unless specified otherwise via kargs
     # https://github.com/dracut-ng/dracut-ng/blob/0ffc61e536d1193cb837917d6a283dd6094cb06d/modules.d/90dmsquash-live/dmsquash-live-root.sh#L23
     cp {{ workdir }}/squashfs.img {{ isoroot }}/LiveOS/squashfs.img
+    {{ if env('CI', '') != '' { "echo '" + style('warning') + "In CI - Deleting: "  + rootfs + "...' " + NORMAL +"; rm -rf " + rootfs } else { '' } }}
 
 # Build the ISO from the compressed image
 iso:
@@ -422,9 +421,8 @@ iso:
     rootfs-clean-sysroot \
     (rootfs-selinux-fix image) \
     (ci-delete-image image) \
-    (process-grub-template extra_kargs) \
     (squash compression) \
-    (iso-organize) \
+    (iso-organize extra_kargs) \
     iso
     mv ./output.iso {{ justfile_dir() }} &>/dev/null
 
@@ -444,6 +442,7 @@ iso:
     echo "extra_kargs      := {{ extra_kargs }}"
     echo "container_image  := {{ container_image || image }}"
     echo "polkit           := {{ polkit }}"
+    echo "CI               := {{ env('CI', '') }}"
     echo "################################################################################"
     sleep 1
 

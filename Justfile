@@ -304,7 +304,7 @@ process-grub-template $extra_kargs="NONE":
         "$TMPL" >"$DEST"
 
 # Prep the environment for the ISO
-iso-organize extra_kargs: (process-grub-template extra_kargs)
+iso-organize extra_kargs: && (process-grub-template extra_kargs)
     #!/usr/bin/env bash
     {{ _ci_grouping }}
     set -xeuo pipefail

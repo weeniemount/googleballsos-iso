@@ -1,7 +1,6 @@
 # Titanoboa (Beta)
 
-A [bootc](https://github.com/bootc-dev/bootc) installer designed to install an image as quickly as possible.
-
+A [bootc](https://github.com/bootc-dev/bootc) installer designed to install an image as quickly as possible. Handles a live user session and then hands off to Anaconda or Readymade for installation. 
 
 ## Mission
 
@@ -17,8 +16,7 @@ Waiting for existing installers to move to cloud native is untenable, let's see 
 
 ## Components
 
-- LiveCD (done in this repository)
-- [ublue-os/yai](https://github.com/ublue-os/yai) - Tauri bootc install wrapper
+- LiveCD
 
 ## Building a Live ISO
 

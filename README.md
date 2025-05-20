@@ -1,4 +1,4 @@
-# Titanoboa (Alpha)
+# Titanoboa (Beta)
 
 A [bootc](https://github.com/bootc-dev/bootc) installer designed to install an image as quickly as possible.
 

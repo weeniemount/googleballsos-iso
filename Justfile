@@ -5,6 +5,13 @@ isoroot := env("TITANOBOA_ISO_ROOT", "work/iso-root")
 rootfs := workdir/"rootfs"
 default_image := "ghcr.io/ublue-os/bluefin:lts"
 arch := arch()
+### BUILDER CONFIGURATION ###
+# Distribution to use for the builder container (for tools and dependencies)
+# Supported values: fedora, centos, almalinux
+# Set via TITANOBOA_BUILDER_DISTRO environment variable (default: fedora)
+builder_distro := env("TITANOBOA_BUILDER_DISTRO", "fedora")
+##############################
+
 ### HOOKS SCRIPT PATHS ###
 # Path to scripts used as hooks in between steps, used in 'hook-*' recipes.
 # Must follow the naming convention HOOK_<recipe name without 'hook_' prefix>
@@ -28,6 +35,10 @@ just := just_executable() + " -f " + source_file()
 
 [private]
 git_root := source_dir()
+
+[private]
+builder_image := if builder_distro == "fedora" { "quay.io/fedora/fedora:latest" } else if builder_distro == "centos" { "ghcr.io/hanthor/centos-anaconda-builder:main" } else if builder_distro == "almalinux-kitten" { "quay.io/almalinux/almalinux:10-kitten" } else if builder_distro == "almalinux" { "quay.io/almalinux/almalinux:10" } else { error("Unsupported builder distribution: " + builder_distro + ". Supported: fedora, centos, almalinux") }
+
 
 [private]
 chroot_function := '
@@ -56,7 +67,7 @@ function builder(){
     --privileged \
     --security-opt label=disable \
     --volume ' + git_root + ':/app \
-    quay.io/fedora/fedora:latest \
+    ' + builder_image + ' \
     /usr/bin/bash -c "$command" $args
 }'
 
@@ -341,7 +352,11 @@ iso:
     # ARCH_SHORT needs to be uppercase
     ARCH_SHORT="$(echo {{ arch }} | sed 's/x86_64/x64/g' | sed 's/aarch64/aa64/g')"
     ARCH_32="$(echo {{ arch }} | sed 's/x86_64/ia32/g' | sed 's/aarch64/arm/g')"
-    cp -avf /boot/efi/EFI/fedora/. $ISOROOT/EFI/BOOT
+    if [[ "$(rpm -E %centos)" -ge 10 ]]; then
+        cp -avf /boot/efi/EFI/centos/. $ISOROOT/EFI/BOOT
+    elif [[ "$(rpm -E %fedora)" -ge 41 ]]; then
+        cp -avf /boot/efi/EFI/fedora/. $ISOROOT/EFI/BOOT
+    fi
     cp -avf $ISOROOT/boot/grub/grub.cfg $ISOROOT/EFI/BOOT/BOOT.conf
     cp -avf $ISOROOT/boot/grub/grub.cfg $ISOROOT/EFI/BOOT/grub.cfg
     cp -avf /boot/grub*/fonts/unicode.pf2 $ISOROOT/EFI/BOOT/fonts
@@ -440,6 +455,8 @@ iso:
     echo "workdir            := {{ workdir }}"
     echo "isoroot            := {{ isoroot }}"
     echo "rootfs             := {{ rootfs }}"
+    echo "builder_distro     := {{ builder_distro }}"
+    echo "builder_image      := {{ builder_image }}"
     echo "HOOK_post_rootfs   := {{ if HOOK_post_rootfs =~ '(^$|^(?i)\bnone\b$)' { '' } else { canonicalize(HOOK_post_rootfs) } }}"
     echo "HOOK_pre_initramfs := {{ if HOOK_pre_initramfs =~ '(^$|^(?i)\bnone\b$)' { '' } else { canonicalize(HOOK_pre_initramfs) } }}"
     echo "image              := {{ image }}"

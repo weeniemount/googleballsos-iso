@@ -208,26 +208,6 @@ with:
 
 For local development and testing, you can build ISOs using the `just` command directly.
 
-#### Installation
-
-1. Install [Just](https://github.com/casey/just):
-   ```bash
-   # On Fedora/RHEL
-   sudo dnf install just
-   
-   # On Ubuntu/Debian
-   sudo snap install --edge --classic just
-   ```
-
-2. Install Podman:
-   ```bash
-   # On Fedora/RHEL
-   sudo dnf install podman
-   
-   # On Ubuntu/Debian
-   sudo apt install podman
-   ```
-
 #### Basic Build Command
 
 ```bash

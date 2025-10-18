@@ -7,3 +7,4 @@ org.mozilla.firefox
 org.supertuxproject.SuperTux
 org.tuxpaint.Tuxpaint
 net.supertuxkart.SuperTuxKart
+org.gtk.Gtk3theme.Breeze

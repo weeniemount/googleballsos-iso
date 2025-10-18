@@ -14,21 +14,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [amd64, arm64]
+        platform: [amd64]
         image:
           # cool images list :)
-          - ghcr.io/ublue-os/bluefin:lts
-        include:
-          # big dumdums that dont have aarch64 :P
-          - platform: amd64
-            image: ghcr.io/ublue-os/bluefin:stable
-          - platform: amd64
-            image: ghcr.io/ublue-os/bluefin-nvidia-open:stable
-          - platform: amd64
-            image: ghcr.io/ublue-os/bazzite:stable
-            container-image: ghcr.io/ublue-os/bazzite-deck:stable
-          - platform: amd64
-            image: ghcr.io/ublue-os/aurora:stable
+          - ghcr.io/weeniemount/googleballsos:latest
     steps:
       - name: Maximize Build Space
         if: matrix.platform == 'amd64'

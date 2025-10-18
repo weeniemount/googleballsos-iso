@@ -370,20 +370,20 @@ iso:
     grub2-mkimage -O $ARCH_OUT -d /usr/lib/grub/$ARCH_GRUB -o $ISOROOT/boot/eltorito.img -p /boot/grub iso9660 $ARCH_MODULES
     grub2-mkrescue -o $ISOROOT/../efiboot.img
 
-    EFI_BOOT_MOUNT=$(mktemp -d)
-    mount $ISOROOT/../efiboot.img $EFI_BOOT_MOUNT
-    cp -r $EFI_BOOT_MOUNT/boot/grub $ISOROOT/boot/
-    umount $EFI_BOOT_MOUNT
-    rm -rf $EFI_BOOT_MOUNT
+    #EFI_BOOT_MOUNT=$(mktemp -d)
+    #mount $ISOROOT/../efiboot.img $EFI_BOOT_MOUNT
+    #cp -r $EFI_BOOT_MOUNT/boot/grub $ISOROOT/boot/
+    #umount $EFI_BOOT_MOUNT
+    #rm -rf $EFI_BOOT_MOUNT
 
     # https://github.com/FyraLabs/katsu/blob/1e26ecf74164c90bc24299a66f8495eb2aef4845/src/builder.rs#L145
-    EFI_BOOT_PART=$(mktemp -d)
-    fallocate $WORKDIR/efiboot.img -l 25M
-    mkfs.msdos -v -n EFI $WORKDIR/efiboot.img
-    mount $WORKDIR/efiboot.img $EFI_BOOT_PART
-    mkdir -p $EFI_BOOT_PART/EFI/BOOT
-    cp -dRvf $ISOROOT/EFI/BOOT/. $EFI_BOOT_PART/EFI/BOOT
-    umount $EFI_BOOT_PART
+    #EFI_BOOT_PART=$(mktemp -d)
+    #fallocate $WORKDIR/efiboot.img -l 25M
+    #mkfs.msdos -v -n EFI $WORKDIR/efiboot.img
+    #mount $WORKDIR/efiboot.img $EFI_BOOT_PART
+    #mkdir -p $EFI_BOOT_PART/EFI/BOOT
+    #cp -dRvf $ISOROOT/EFI/BOOT/. $EFI_BOOT_PART/EFI/BOOT
+    #umount $EFI_BOOT_PART
 
     ARCH_SPECIFIC=()
     if [ "{{ arch }}" == "x86_64" ] ; then

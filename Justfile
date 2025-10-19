@@ -320,6 +320,8 @@ process-grub-template $extra_kargs="NONE":
     DEST="{{ isoroot }}/boot/grub/grub.cfg"
     # TODO figure out a better mechanism
     source "$OS_RELEASE"
+    # Use NAME if PRETTY_NAME is not set, with fallback to "Live OS"
+    PRETTY_NAME="${PRETTY_NAME:-${NAME:-Live OS}}"
     PRETTY_NAME="${PRETTY_NAME/ (*)}"
     sed \
         -e "s|@PRETTY_NAME@|${PRETTY_NAME}|g" \

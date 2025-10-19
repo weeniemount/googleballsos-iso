@@ -15,7 +15,7 @@ jobs:
         platform: [amd64]
         image:
           # cool images list :)
-          - ghcr.io/weeniemount/googleballsos:latest
+          - ghcr.io/weeniemount/weenos:latest
     steps:
       - name: Maximize Build Space
         if: matrix.platform == 'amd64'

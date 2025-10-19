@@ -304,7 +304,7 @@ squash fs_type="squashfs":
         builder "$CMD" "/app/{{ rootfs }}" "/app/{{ workdir }}"
     fi
 
-# Expand grub templace, according to the image os-release.
+# Expand grub template, according to the image os-release.
 process-grub-template $extra_kargs="NONE":
     #!/usr/bin/env bash
     {{ _ci_grouping }}
@@ -319,7 +319,8 @@ process-grub-template $extra_kargs="NONE":
     TMPL="src/grub.cfg.tmpl"
     DEST="{{ isoroot }}/boot/grub/grub.cfg"
     # TODO figure out a better mechanism
-    PRETTY_NAME="$(source "$OS_RELEASE" >/dev/null && echo "${PRETTY_NAME/ (*)}")"
+    source "$OS_RELEASE"
+    PRETTY_NAME="${PRETTY_NAME/ (*)}"
     sed \
         -e "s|@PRETTY_NAME@|${PRETTY_NAME}|g" \
         -e "s|@EXTRA_KARGS@|${kargs[*]}|g" \

@@ -320,8 +320,8 @@ process-grub-template $extra_kargs="NONE":
     DEST="{{ isoroot }}/boot/grub/grub.cfg"
     # TODO figure out a better mechanism
     source "$OS_RELEASE"
-    # Use NAME if PRETTY_NAME is not set, with fallback to "Google Balls OS"
-    PRETTY_NAME="${PRETTY_NAME:-${NAME:-Google Balls OS}}"
+    # Use NAME if PRETTY_NAME is not set, with fallback to "weenOS"
+    PRETTY_NAME="${PRETTY_NAME:-${NAME:-weenOS}}"
     PRETTY_NAME="${PRETTY_NAME/ (*)}"
     sed \
         -e "s|@PRETTY_NAME@|${PRETTY_NAME}|g" \
